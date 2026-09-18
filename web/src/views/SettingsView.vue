@@ -137,6 +137,13 @@ onMounted(load)
       <n-form-item label="背景图 fanart（详情页大图）">
         <n-switch v-model:value="config.images.fanart" />
       </n-form-item>
+      <n-form-item label="背景图最小宽度（像素，0 = 不把关）">
+        <n-input-number v-model:value="config.images.fanart_min_width" :min="0" :max="4000" />
+      </n-form-item>
+      <n-alert type="info" style="margin-bottom: 12px">
+        站点的「剧照」候选常常只是 120x90 的缩略图，当背景图用会糊。低于这个宽度的候选会被跳过，
+        自动改用封面大图。设成 0 表示不把关。
+      </n-alert>
       <n-form-item label="剧照 extrafanart（详情页画廊，体积大）">
         <n-switch v-model:value="config.images.extrafanart" />
       </n-form-item>

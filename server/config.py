@@ -72,6 +72,13 @@ class ImageDownloadConfig(BaseModel):
     extrafanart: bool = False
     extrafanart_limit: int = Field(default=5, ge=1, le=50)
 
+    fanart_min_width: int = Field(default=400, ge=0, le=4000)
+    """背景图的最小宽度（像素）。低于这个宽度的候选会被跳过，换下一张。
+
+    站点给的"剧照"候选常常是 120x90 的缩略图，当背景图用会糊成一片。
+    设为 0 表示不做尺寸把关。
+    """
+
     overwrite: bool = False
     """默认不覆盖已存在的图片。"""
 

@@ -48,6 +48,7 @@ export interface ImageDownloadConfig {
   fanart: boolean
   extrafanart: boolean
   extrafanart_limit: number
+  fanart_min_width: number
   overwrite: boolean
   concurrency: number
   timeout: number

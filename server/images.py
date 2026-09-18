@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from server.config import ImageDownloadConfig
+from server.imageinfo import image_size
 from server.models import AggregatedMetadata, MediaMetadata
 from server.storage import StorageError
 
@@ -83,10 +84,16 @@ def plan_images(metadata: MediaMetadata, config: ImageDownloadConfig, *, stem: s
 
     fanart_candidates = _dedupe(metadata.fanart_urls)
 
-    if config.fanart and fanart_candidates:
-        tasks.append(
-            ImageTask("fanart", list(fanart_candidates), Path(f"{stem}-fanart{IMAGE_SUFFIX}"))
-        )
+    if config.fanart:
+        # 背景图优先用大图：站点的"剧照"候选往往只是 120x90 的缩略图，
+        # 当背景图用会被拉伸成一团模糊。把封面垫在候选末尾兜底。
+        fanart_urls = [url for url in fanart_candidates if url != metadata.poster_url]
+        if metadata.poster_url:
+            fanart_urls.append(metadata.poster_url)
+        if fanart_urls:
+            tasks.append(
+                ImageTask("fanart", _dedupe(fanart_urls), Path(f"{stem}-fanart{IMAGE_SUFFIX}"))
+            )
 
     if config.extrafanart and fanart_candidates:
         # 背景图已经用了第一张时，剧照从第二张开始，避免同一张图占两个槽位
@@ -169,6 +176,7 @@ class ImageDownloader:
             report.skipped.append(f"{task.kind}: 已存在")
             return
 
+        too_small: list[str] = []
         for url in task.candidates:
             try:
                 data = await self._ctx.http.get_bytes(url, source=task.kind, referer=referer)
@@ -177,13 +185,25 @@ class ImageDownloader:
                 continue
             if not data:
                 continue
+
+            if task.kind == "fanart" and config.fanart_min_width > 0:
+                size = image_size(data)
+                if size is not None and size[0] < config.fanart_min_width:
+                    too_small.append(f"{size[0]}x{size[1]}")
+                    continue
+
             try:
                 report.written.append(self._ctx.storage.write_bytes(target, data))
             except StorageError as exc:
                 report.failed.append(f"{task.kind}: 写入失败 {exc}")
             return
 
-        report.failed.append(f"{task.kind}: {len(task.candidates)} 个候选全部失败")
+        if too_small:
+            report.skipped.append(
+                f"{task.kind}: 候选图都小于 {config.fanart_min_width}px（{', '.join(too_small)}）"
+            )
+        else:
+            report.failed.append(f"{task.kind}: {len(task.candidates)} 个候选全部失败")
 
 
 __all__ = ["ImageDownloader", "ImageReport", "ImageTask", "plan_images"]

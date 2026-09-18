@@ -74,10 +74,29 @@ def test_missing_source_images_are_skipped():
 
 
 def test_candidate_urls_are_deduped():
-    meta = _metadata(fanart_urls=["https://a/1.jpg", "https://a/1.jpg", "https://a/2.jpg"])
+    meta = _metadata(
+        fanart_urls=["https://a/1.jpg", "https://a/1.jpg", "https://a/2.jpg"],
+        poster_url="https://a/cover.jpg",
+    )
     config = ImageDownloadConfig(poster=False, thumb=False, fanart=True)
     tasks = plan_images(meta, config, stem="X")
-    assert tasks[0].candidates == ["https://a/1.jpg", "https://a/2.jpg"]
+    # 去重后保序，末尾垫上封面当大图兜底
+    assert tasks[0].candidates == ["https://a/1.jpg", "https://a/2.jpg", "https://a/cover.jpg"]
+
+
+def test_fanart_puts_cover_last_not_first():
+    """封面是兜底，不能抢占真正的背景图候选。"""
+    meta = _metadata(fanart_urls=["https://a/1.jpg"], poster_url="https://a/cover.jpg")
+    tasks = plan_images(meta, ImageDownloadConfig(poster=False, thumb=False, fanart=True), stem="X")
+    assert tasks[0].candidates[0] == "https://a/1.jpg"
+    assert tasks[0].candidates[-1] == "https://a/cover.jpg"
+
+
+def test_fanart_candidates_have_no_duplicate_of_cover():
+    """封面已经出现在剧照列表里时，不要再追加一次。"""
+    meta = _metadata(fanart_urls=["https://a/cover.jpg"], poster_url="https://a/cover.jpg")
+    tasks = plan_images(meta, ImageDownloadConfig(poster=False, thumb=False, fanart=True), stem="X")
+    assert tasks[0].candidates == ["https://a/cover.jpg"]
 
 
 # ---------------------------------------------------------------- 落盘
@@ -240,3 +259,98 @@ async def test_image_download_uses_source_referer(tmp_path, monkeypatch):
         metadata_dir=tmp_path / "media" / "meta",
     )
     assert seen and all(r == "https://www.javbus.com" for r in seen)
+
+# ---------------------------------------------------------------- 背景图尺寸把关
+
+
+def _jpeg(width: int, height: int) -> bytes:
+    import struct
+
+    sof0 = b"\xff\xc0" + struct.pack(">H", 17) + b"\x08" + struct.pack(">HH", height, width)
+    sof0 += b"\x03" + b"\x01\x11\x00" * 3
+    return b"\xff\xd8" + sof0 + b"\xff\xd9"
+
+
+async def test_fanart_skips_small_candidates_and_falls_back_to_cover(tmp_path):
+    """站点的"剧照"只是 120x90 缩略图时，背景图要改用封面大图。"""
+    http = _FakeHttp(
+        {
+            "https://img.test/sample1.jpg": _jpeg(120, 90),
+            "https://img.test/sample2.jpg": _jpeg(120, 90),
+            "https://img.test/poster.jpg": _jpeg(800, 538),
+        }
+    )
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(poster=False, thumb=False, fanart=True, fanart_min_width=400),
+    )
+    metadata_dir = tmp_path / "media" / "meta"
+
+    report = await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
+        metadata_dir=metadata_dir,
+    )
+
+    assert [p.name for p in report.written] == ["MIDV-123-fanart.jpg"]
+    assert (metadata_dir / "MIDV-123-fanart.jpg").read_bytes() == _jpeg(800, 538)
+
+
+async def test_fanart_keeps_a_large_sample_when_available(tmp_path):
+    """如果站点真给了大图，就用自己的，不用退而求其次拿封面。"""
+    http = _FakeHttp(
+        {
+            "https://img.test/sample1.jpg": _jpeg(1280, 720),
+            "https://img.test/poster.jpg": _jpeg(800, 538),
+        }
+    )
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(poster=False, thumb=False, fanart=True, fanart_min_width=400),
+    )
+    metadata_dir = tmp_path / "media" / "meta"
+
+    await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
+        metadata_dir=metadata_dir,
+    )
+    assert (metadata_dir / "MIDV-123-fanart.jpg").read_bytes() == _jpeg(1280, 720)
+
+
+async def test_zero_threshold_disables_the_guard(tmp_path):
+    """把阈值设成 0 就是关掉把关，小图也照收。"""
+    http = _FakeHttp({"https://img.test/sample1.jpg": _jpeg(120, 90)})
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(
+            poster=False, thumb=False, fanart=True, fanart_min_width=0
+        ),
+    )
+    metadata_dir = tmp_path / "media" / "meta"
+
+    await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(fanart_urls=["https://img.test/sample1.jpg"], poster_url=None),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
+        metadata_dir=metadata_dir,
+    )
+    assert (metadata_dir / "MIDV-123-fanart.jpg").exists()
+
+
+async def test_all_candidates_too_small_is_reported_as_skipped(tmp_path):
+    http = _FakeHttp({"https://img.test/sample1.jpg": _jpeg(120, 90)})
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(poster=False, thumb=False, fanart=True, fanart_min_width=400),
+    )
+    report = await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(fanart_urls=["https://img.test/sample1.jpg"], poster_url=None),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
+        metadata_dir=tmp_path / "media" / "meta",
+    )
+    assert report.written == []
+    assert any("小于" in item for item in report.skipped)
