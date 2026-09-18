@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from server import build_info
 from server.classify import classify
 from server.config import ImageDownloadConfig, Settings
 from server.models import CONTENT_TYPE_LABELS, ScrapeStatus, StorageProvider
@@ -43,6 +44,7 @@ async def health(request: Request) -> dict[str, Any]:
     ctx = get_ctx(request)
     return {
         "status": "ok",
+        **build_info(),
         "data_dir": str(ctx.settings.data_dir),
         "allowed_roots": [str(r) for r in ctx.storage.guard.roots],
         "writes_enabled": ctx.storage.writes_enabled,

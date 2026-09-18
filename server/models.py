@@ -130,6 +130,15 @@ class ScrapeStatus(StrEnum):
     FAILED = "failed"
     SKIPPED = "skipped"
 
+    NEED_SELECTION = "need_selection"
+    """抓到了东西，但**对不上查询内容** —— 需要人工确认后再用。
+
+    里番没有番号，查询只能靠作品名，而站点的搜索是模糊的：
+    库里没有这部作品时，它会返回"最像的"一条，通常是毫不相干的真人片。
+    这种错配如果当成 success 写进媒体库，比重名覆盖更难发现 ——
+    封面、简介、演员全是别人的。
+    """
+
 
 class ScrapeRecord(BaseModel):
     """一次刮削的结果记录。"""

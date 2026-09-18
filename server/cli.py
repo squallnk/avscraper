@@ -38,7 +38,11 @@ async def _with_ctx(fn: Callable[[Any], Any]) -> int:
 
 
 def cmd_selftest(ctx: Any) -> int:
+    from server import build_info
+
+    info = build_info()
     print("== avscraper 自检（只读） ==")
+    print(f"版本            : {info['version']}  构建 {info['build_sha']}")
     print(f"数据目录        : {ctx.settings.data_dir}")
     print(f"数据库          : {ctx.db.path}")
     print(f"允许根目录      : {[str(r) for r in ctx.storage.guard.roots] or '（未配置：禁止任何写入）'}")

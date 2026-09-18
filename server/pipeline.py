@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from server.classify import classify, is_video_file
+from server.matching import query_matches_metadata
 from server.models import (
     AggregatedMetadata,
     ContentType,
@@ -92,10 +93,22 @@ async def scrape_one(ctx: AppContext, path: Path) -> ScrapeRecord:
             aggregated.metadata.poster_url,
         ]
     )
-    record.status = ScrapeStatus.SUCCESS if has_any else ScrapeStatus.NOT_FOUND
+
     if not has_any:
+        record.status = ScrapeStatus.NOT_FOUND
         failures = [f"{r.source}: {r.failure_reason}" for r in aggregated.sources]
         record.error = "所有源均未命中（" + ", ".join(failures) + "）"
+    elif query and not query_matches_metadata(query, aggregated.metadata):
+        # 站点搜索是模糊的：库里没有这部作品时会返回"最像的"一条，
+        # 通常是毫不相干的片子。这种结果不能当成功写进媒体库。
+        record.status = ScrapeStatus.NEED_SELECTION
+        record.error = (
+            f"抓到的结果与查询不符，需要人工确认。查询「{query}」，"
+            f"抓回标题「{(aggregated.metadata.title or '')[:60]}」"
+        )
+    else:
+        record.status = ScrapeStatus.SUCCESS
+
     await ctx.db.upsert_record(record)
     return record
 
