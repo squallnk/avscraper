@@ -114,6 +114,7 @@ class ImageDownloader:
         metadata: MediaMetadata,
         aggregated: AggregatedMetadata,
         metadata_dir: Path,
+        stem: str | None = None,
     ) -> ImageReport:
         report = ImageReport()
         config = self._ctx.config.images
@@ -122,7 +123,7 @@ class ImageDownloader:
             report.skipped.append("写入未开启（dry_run 或 organize_enabled=false）")
             return report
 
-        tasks = plan_images(metadata, config, stem=metadata.number or "unknown")
+        tasks = plan_images(metadata, config, stem=stem or metadata.number or "unknown")
         if not tasks:
             report.skipped.append("没有要下载的图片（全部关闭或源没给图）")
             return report

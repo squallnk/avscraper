@@ -106,16 +106,33 @@ def _record_id(path: Path) -> str:
     return hashlib.sha1(str(path).encode("utf-8")).hexdigest()[:16]
 
 
+def _is_dedicated_folder(video_path: Path) -> bool:
+    """视频所在目录是不是"这一部作品独占"。
+
+    决定要不要写 `tvshow.nfo`：它是**剧集级**文件。在"一个目录塞一堆不同作品"的
+    扁平结构里写它，只会被后一个文件反复覆盖；只有在独占目录里才有意义。
+    """
+    try:
+        siblings = [f for f in video_path.parent.iterdir() if is_video_file(f.name)]
+    except OSError:
+        return False
+    return len(siblings) <= 1
+
+
 async def write_metadata(
     ctx: AppContext,
     *,
     metadata: MediaMetadata,
     aggregated: AggregatedMetadata,
     metadata_dir: Path,
+    video_path: Path | None = None,
     season: int | None = None,
     episode: int | None = None,
 ) -> list[Path]:
     """写 NFO 与图片到 metadata_dir。返回写出的文件列表。
+
+    **文件名主干取视频文件名，不取番号** —— 里番没有番号，若用 `number or "unknown"`
+    会让同一目录下所有文件都写成 `unknown.nfo`，互相覆盖。
 
     写入未开启（`dry_run` 或 `organize_enabled=false`）时直接返回空列表，不碰磁盘。
     """
@@ -123,7 +140,8 @@ async def write_metadata(
         return []
 
     written: list[Path] = []
-    stem = metadata.number or "unknown"
+    stem = video_path.stem if video_path is not None else (metadata.number or "unknown")
+
     try:
         ctx.storage.mkdir(metadata_dir)
     except StorageError as exc:
@@ -132,11 +150,13 @@ async def write_metadata(
 
     try:
         if aggregated.content_type is ContentType.JANIME:
-            # 里番按剧集结构入库：tvshow.nfo 描述作品，{文件名}.nfo 描述这一集。
-            # 解析不出集数时不写 episode NFO —— 宁缺勿编。
-            written.append(
-                ctx.storage.write_text(metadata_dir / "tvshow.nfo", build_tvshow_nfo(aggregated))
-            )
+            # 剧集级文件只在作品独占目录里写，否则扁平结构下会互相覆盖
+            if video_path is not None and _is_dedicated_folder(video_path):
+                written.append(
+                    ctx.storage.write_text(
+                        metadata_dir / "tvshow.nfo", build_tvshow_nfo(aggregated)
+                    )
+                )
             if episode is not None:
                 written.append(
                     ctx.storage.write_text(
@@ -145,15 +165,16 @@ async def write_metadata(
                     )
                 )
         else:
-            nfo = build_movie_nfo(aggregated)
-            written.append(ctx.storage.write_text(metadata_dir / f"{stem}.nfo", nfo))
+            written.append(
+                ctx.storage.write_text(metadata_dir / f"{stem}.nfo", build_movie_nfo(aggregated))
+            )
     except StorageError as exc:
         logger.warning("写 NFO 失败: %s", exc)
 
     from server.images import ImageDownloader
 
     report = await ImageDownloader(ctx).run(
-        metadata=metadata, aggregated=aggregated, metadata_dir=metadata_dir
+        metadata=metadata, aggregated=aggregated, metadata_dir=metadata_dir, stem=stem
     )
     written.extend(report.written)
     if report.failed:
@@ -198,8 +219,11 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
         if record.status is ScrapeStatus.SUCCESS:
             succeeded += 1
             if record.metadata and task.payload.get("write_metadata"):
+                # 默认写在视频旁边 —— `.metadata/` 子目录 Emby 不认，等于白写
                 metadata_dir = Path(
-                    task.payload.get("metadata_dir") or (path.parent / ".metadata")
+                    task.payload.get("metadata_dir")
+                    or ctx.config.metadata_dir
+                    or path.parent
                 )
                 await write_metadata(
                     ctx,
@@ -211,6 +235,7 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
                         field_sources=record.field_sources,
                     ),
                     metadata_dir=metadata_dir,
+                    video_path=path,
                     season=record.season,
                     episode=record.episode,
                 )

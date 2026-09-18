@@ -154,69 +154,42 @@ def test_episode_info_is_immutable():
 # ---------------------------------------------------------------- 落盘
 
 
-async def test_janime_writes_tvshow_and_episode_nfo(tmp_path):
-    from server.pipeline import write_metadata
+class _Ctx:
+    """只带 write_metadata 需要的属性。"""
 
-    class _Ctx:
-        def __init__(self, storage, config):
-            self.storage = storage
-            self.config = config
-            self.http = None
+    def __init__(self, storage, config):
+        self.storage = storage
+        self.config = config
 
+
+def _ctx(tmp_path, *, extra_videos: int = 0):
     from server.config import RuntimeConfig
 
     media = tmp_path / "media"
-    media.mkdir()
-    storage = LocalStorage(RootGuard([media]), allow_writes=True)
-    ctx = _Ctx(storage, RuntimeConfig(organize_enabled=True, dry_run=False))
-
-    aggregated = AggregatedMetadata(
-        number=None,
-        content_type=ContentType.JANIME,
-        metadata=MediaMetadata(title="某里番作品"),
-    )
-    metadata_dir = media / "meta"
-
-    # 把图片下载关掉，这个用例只关心 NFO
-    ctx.config.images.poster = False
-    ctx.config.images.thumb = False
-
-    written = await write_metadata(
-        ctx,  # type: ignore[arg-type]
-        metadata=aggregated.metadata,
-        aggregated=aggregated,
-        metadata_dir=metadata_dir,
-        season=1,
-        episode=3,
-    )
-    names = {p.name for p in written}
-    assert "tvshow.nfo" in names
-    assert "unknown.nfo" in names  # 没有番号时用 unknown 作文件名
-
-    from xml.etree import ElementTree as ET
-
-    episode_root = ET.fromstring((metadata_dir / "unknown.nfo").read_text(encoding="utf-8"))
-    assert episode_root.tag == "episodedetails"
-    assert episode_root.findtext("episode") == "3"
-
-
-async def test_janime_without_episode_writes_only_tvshow(tmp_path):
-    """解析不出集数时不写 episode NFO —— 宁缺勿编。"""
-    from server.config import RuntimeConfig
-    from server.pipeline import write_metadata
-
-    class _Ctx:
-        def __init__(self, storage, config):
-            self.storage = storage
-            self.config = config
-
-    media = tmp_path / "media"
-    media.mkdir()
+    media.mkdir(parents=True, exist_ok=True)
     storage = LocalStorage(RootGuard([media]), allow_writes=True)
     config = RuntimeConfig(organize_enabled=True, dry_run=False)
+    # 这个用例只关心 NFO，把图片下载全关掉
     config.images.poster = False
     config.images.thumb = False
-    ctx = _Ctx(storage, config)
+    config.images.fanart = False
+    config.images.extrafanart = False
+    for index in range(extra_videos):
+        (media / f"other{index}.mp4").write_bytes(b"x")
+    return _Ctx(storage, config), media
+
+
+async def test_janime_nfo_is_named_after_the_video(tmp_path):
+    r"""NFO 文件名取**视频文件名**，不取番号。
+
+    里番没有番号，早期实现用 \`metadata.number or "unknown"\`，
+    结果同目录下所有文件都写成 \`unknown.nfo\`，互相覆盖 —— 这是启用写入后才会暴露的 bug。
+    """
+    from server.pipeline import write_metadata
+
+    ctx, media = _ctx(tmp_path)
+    video = media / "[251128][魔人]勇者姫ミリア 第四話.chs.mp4"
+    video.write_bytes(b"x")
 
     aggregated = AggregatedMetadata(
         number=None, content_type=ContentType.JANIME, metadata=MediaMetadata(title="某里番作品")
@@ -225,8 +198,130 @@ async def test_janime_without_episode_writes_only_tvshow(tmp_path):
         ctx,  # type: ignore[arg-type]
         metadata=aggregated.metadata,
         aggregated=aggregated,
-        metadata_dir=media / "meta",
+        metadata_dir=media,
+        video_path=video,
+        season=1,
+        episode=4,
+    )
+    names = {p.name for p in written}
+    assert f"{video.stem}.nfo" in names
+    assert "unknown.nfo" not in names
+
+    from xml.etree import ElementTree as ET
+
+    root = ET.fromstring((media / f"{video.stem}.nfo").read_text(encoding="utf-8"))
+    assert root.tag == "episodedetails"
+    assert root.findtext("episode") == "4"
+
+
+async def test_two_janime_files_get_separate_nfos(tmp_path):
+    """同目录两个文件必须各写各的，不能互相覆盖。"""
+    from server.pipeline import write_metadata
+
+    ctx, media = _ctx(tmp_path)
+    first = media / "[A]作品一 第1話.mp4"
+    second = media / "[B]作品二 第2話.mp4"
+    first.write_bytes(b"x")
+    second.write_bytes(b"x")
+
+    for video, episode in ((first, 1), (second, 2)):
+        aggregated = AggregatedMetadata(
+            number=None, content_type=ContentType.JANIME, metadata=MediaMetadata(title=video.stem)
+        )
+        await write_metadata(
+            ctx,  # type: ignore[arg-type]
+            metadata=aggregated.metadata,
+            aggregated=aggregated,
+            metadata_dir=media,
+            video_path=video,
+            season=1,
+            episode=episode,
+        )
+
+    assert (media / f"{first.stem}.nfo").exists()
+    assert (media / f"{second.stem}.nfo").exists()
+
+
+async def test_tvshow_nfo_only_in_a_dedicated_folder(tmp_path):
+    r"""\`tvshow.nfo\` 是剧集级文件，只在"这部作品独占目录"里写。
+
+    扁平目录（一堆不同作品混在一起）里写它只会被后一个文件反复覆盖。
+    """
+    from server.pipeline import write_metadata
+
+    # 独占目录：只有一个视频
+    ctx, media = _ctx(tmp_path / "solo")
+    solo = media / "作品名 第1話.mp4"
+    solo.write_bytes(b"x")
+    aggregated = AggregatedMetadata(
+        number=None, content_type=ContentType.JANIME, metadata=MediaMetadata(title="作品名")
+    )
+    written = await write_metadata(
+        ctx,  # type: ignore[arg-type]
+        metadata=aggregated.metadata,
+        aggregated=aggregated,
+        metadata_dir=media,
+        video_path=solo,
+        season=1,
+        episode=1,
+    )
+    assert "tvshow.nfo" in {p.name for p in written}
+
+    # 扁平目录：还有别的视频
+    ctx2, media2 = _ctx(tmp_path / "flat", extra_videos=1)
+    flat = media2 / "作品名 第1話.mp4"
+    flat.write_bytes(b"x")
+    written2 = await write_metadata(
+        ctx2,  # type: ignore[arg-type]
+        metadata=aggregated.metadata,
+        aggregated=aggregated,
+        metadata_dir=media2,
+        video_path=flat,
+        season=1,
+        episode=1,
+    )
+    assert "tvshow.nfo" not in {p.name for p in written2}
+
+
+async def test_janime_without_episode_writes_no_episode_nfo(tmp_path):
+    """解析不出集数时不写 episode NFO —— 宁缺勿编。"""
+    from server.pipeline import write_metadata
+
+    ctx, media = _ctx(tmp_path)
+    video = media / "作品名.mp4"
+    video.write_bytes(b"x")
+    aggregated = AggregatedMetadata(
+        number=None, content_type=ContentType.JANIME, metadata=MediaMetadata(title="作品名")
+    )
+    written = await write_metadata(
+        ctx,  # type: ignore[arg-type]
+        metadata=aggregated.metadata,
+        aggregated=aggregated,
+        metadata_dir=media,
+        video_path=video,
         season=None,
         episode=None,
     )
-    assert {p.name for p in written} == {"tvshow.nfo"}
+    names = {p.name for p in written}
+    assert f"{video.stem}.nfo" not in names
+
+
+async def test_movie_nfo_named_after_video(tmp_path):
+    from server.pipeline import write_metadata
+
+    ctx, media = _ctx(tmp_path)
+    video = media / "MIDV-123.mp4"
+    video.write_bytes(b"x")
+    aggregated = AggregatedMetadata(
+        number="MIDV-123",
+        content_type=ContentType.CENSORED,
+        metadata=MediaMetadata(number="MIDV-123", title="某作品"),
+    )
+    written = await write_metadata(
+        ctx,  # type: ignore[arg-type]
+        metadata=aggregated.metadata,
+        aggregated=aggregated,
+        metadata_dir=media,
+        video_path=video,
+    )
+    assert "MIDV-123.nfo" in {p.name for p in written}
