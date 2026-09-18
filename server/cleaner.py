@@ -1,0 +1,86 @@
+"""刮削查询名的清洗。
+
+**为什么必须有这一步**：里番没有番号，查询只能靠作品名。而文件名是"发布形态"的：
+
+    [251128][魔人]勇者姫ミリア 第四話 砂漠の町のオークション！ ○○堕ちとメイドご奉仕.chs.mp4
+
+把这一整串丢给站点搜索，一个都搜不到。必须先把发布信息剥掉，只留作品名：
+
+    勇者姫ミリア
+
+这是部署后跑了真实文件才暴露的问题 —— 分类判对了（janime），但刮削全部 not_found，
+因为查询串里带着日期、制作组、集数、副标题、语言后缀。
+
+清洗规则参考同类工具的做法（去日期前缀 / 去制作组方括号 / 去 OVA 标记 / 去副标题 /
+去集数标记及其后续文本 / 去末尾作者方括号）。
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+VIDEO_EXT = re.compile(r"\.(mp4|mkv|avi|wmv|mov|flv|rmvb|ts|m2ts|webm|m4v|iso)$", re.I)
+
+# 语言/字幕后缀，出现在扩展名之前
+LANGUAGE_SUFFIXES = tuple(
+    re.compile(p, re.I)
+    for p in (
+        r"\.chs\b", r"\.cht\b", r"\.chi\b", r"\.tc\b", r"\.sc\b",
+        r"\.jpn\b", r"\.jap\b", r"\.eng\b", r"\.zho\b", r"\.und\b",
+        r"\.[a-z]{2}-[a-z]{2}\b",
+    )
+)
+
+DATE_PREFIX = re.compile(r"^\s*\[\s*(?:\d{6}|\d{8})\s*\]")
+LEADING_BRACKET = re.compile(r"^\s*\[[^\]]{1,40}\]")
+TRAILING_BRACKET = re.compile(r"\s*\[[^\]]{1,40}\]\s*$")
+
+ANIMATION_MARKERS = tuple(
+    re.compile(p, re.I)
+    for p in (r"\bOVA\b", r"\bOAD\b", r"\bONA\b", r"\bTHE\s+ANIMATION\b", r"\bANIMATION\b")
+)
+
+SUBTITLE_WRAPPERS = tuple(
+    re.compile(p) for p in (r"～[^～]{2,}～", r"〜[^〜]{2,}〜", r"「[^」]+」", r"『[^』]+』")
+)
+
+# 集数标记：命中即**从这里截断**，后续都是副标题
+EPISODE_CUT = re.compile(
+    r"第\s*[\d一二三四五六七八九十百]+\s*[話话集回章弾幕巻卷]"
+    r"|[＃#♯]\s*\d+"
+    r"|\bVol\.?\s*\d+"
+    r"|其[のノ之乃]\s*[\d一二三四五六七八九十]"
+    r"|前編|後編|前篇|後篇|上巻|下巻"
+    r"|\bEP?\s*\d{1,3}\b",
+    re.I,
+)
+
+
+def clean_query_name(filename: str) -> str:
+    """把发布形态的文件名清洗成可用于搜索的作品名。清洗不出东西时返回空串。"""
+    text = Path(filename).name
+    text = VIDEO_EXT.sub("", text)
+    for pattern in LANGUAGE_SUFFIXES:
+        text = pattern.sub("", text)
+
+    text = DATE_PREFIX.sub("", text)
+    text = LEADING_BRACKET.sub("", text)  # 制作组
+
+    for pattern in ANIMATION_MARKERS:
+        text = pattern.sub(" ", text)
+    for pattern in SUBTITLE_WRAPPERS:
+        text = pattern.sub(" ", text)
+
+    # 集数标记之后的内容（副标题）全部丢掉
+    matched = EPISODE_CUT.search(text)
+    if matched:
+        text = text[: matched.start()]
+
+    text = TRAILING_BRACKET.sub("", text)  # 末尾作者方括号
+    text = re.sub(r"[._]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" -_　·・")
+
+
+__all__ = ["clean_query_name"]

@@ -39,10 +39,20 @@ MIN_SIZE_MB_DEFAULT = 50
 async def scrape_one(ctx: AppContext, path: Path) -> ScrapeRecord:
     """刮削单个文件并写记录。不落盘。"""
     match = classify(path)
+
+    # 没有番号时（里番、国产等）查询只能用作品名。
+    # **必须清洗**：直接拿 path.stem 会把日期、制作组、集数、副标题、语言后缀
+    # 一起丢给站点，一个都搜不到。
+    query = None
+    if not match.number:
+        from server.cleaner import clean_query_name
+
+        query = clean_query_name(path.name) or path.stem
+
     ctx_info = FetchContext(
         number=match.number,
         content_type=match.content_type,
-        query=path.stem if not match.number else None,
+        query=query,
         path=str(path),
     )
 
