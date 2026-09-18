@@ -48,6 +48,42 @@ def test_janime_by_path_keyword():
     assert any("里番" in item for item in result.evidence)
 
 
+def test_janime_by_release_studio():
+    """真实放的里番常常只有制作组、没有 \"アニメ\" 这类关键词。
+
+    这是部署后才发现的：\\`[251128][nur]...\\` 这种文件在没有制作组名单时被判成 unknown。
+    名单匹配有前提 —— 必须出现在 \\`[日期][制作组]\\` 结构里。
+    """
+    for name in (
+        "[251128][nur]ドSなペット ～初めての躾け～.chs.mp4",
+        "[251114][Queen Bee]牝を狩る村 前編[しのぎ鋭介].chs.mp4",
+        "[251128][魔人]危険な森 おにごっこ 第二話 「早くお家に帰らなくちゃ」.chs.mp4",
+    ):
+        assert classify(f"/media/media/{name}").content_type is ContentType.JANIME, name
+
+
+def test_janime_english_animation_marker():
+    r"""ピンクパイナップル 的命名习惯是 \`XXX THE ANIMATION\`，只认片假名会漏掉。"""
+    result = classify("/media/media/[251128][ピンクパイナップル]作品名 THE ANIMATION 第2巻.chs.mp4")
+    assert result.content_type is ContentType.JANIME
+    assert result.episode == 2
+
+
+def test_studio_word_alone_does_not_trigger_janime():
+    r"""制作组名单里有 Seven / Milky / Lune 这类通用词。
+
+    只在 \`[日期][制作组]\` 结构里认，避免普通影片误判成里番。
+    """
+    for name in ("Seven Samurai 1954.mkv", "Milky Way 2015.mp4", "Lune de Miel 2019.mkv"):
+        assert classify(f"/media/media/{name}").content_type is not ContentType.JANIME, name
+
+
+def test_unknown_bracket_group_is_not_janime():
+    """方括号里有东西不代表就是里番制作组。"""
+    result = classify("/media/media/[20240101][Some Random Group]Movie Name.mp4")
+    assert result.content_type is not ContentType.JANIME
+
+
 def test_janime_by_episode_marker():
     result = classify("/media/anime/某作品 第03話.mkv")
     assert result.content_type is ContentType.JANIME

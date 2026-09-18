@@ -68,7 +68,33 @@ _WESTERN_MARKERS = (
 _JANIME_MARKERS = (
     "里番", "裡番", "裏番", "成年コミック", "アニメ", "アニメーション",
     "ova", "oad", "ona", "hentai", "同人アニメ", "美少女ゲーム",
+    # 英文形态。真实文件里 `XXX THE ANIMATION` 极常见（ピンクパイナップル 的命名习惯），
+    # 只认片假名会漏掉一大片。
+    "the animation",
 )
+
+# 里番制作组。真实放的里番文件名常常**只有制作组、没有「アニメ」这类关键词**，
+# 例如 `[251128][nur]...`。没有这份名单就会判成 unknown。
+#
+# 匹配有前提：必须出现在 `[日期][制作组]` 这种方括号结构里（见 _RELEASE_PREFIX_RE），
+# 而不是在文件名任意位置命中 —— 否则像 `Seven` `Milky` `Lune` 这种通用词
+# 会把普通影片误判成里番。
+_JANIME_STUDIOS = (
+    "queen bee", "king bee", "pink pineapple", "ピンクパイナップル",
+    "bunny walker", "ばにぃうぉ～か～", "ばにぃうぉーかー",
+    "collaboration works", "studio fantasia", "schoolzone", "スクールゾーン",
+    "majin", "魔人", "poro", "a1c", "エイ・ワン・シー", "arms", "lilith",
+    "bootleg", "t-rex", "pixy", "milky", "pashmina", "gold bear", "discovery",
+    "nur", "suzuki mirano", "ms pictures", "lune", "seven", "セブン",
+    "chichinoya", "ちちのや", "mary jane", "メリー・ジェーン",
+    "celeb", "セレブ", "breakbottle", "digital works",
+    "green bunny", "グリーンバニー", "vanilla", "バニラ", "animac", "アニマック",
+    "media bank", "メディアバンク", "とらのあな", "toranoana", "37℃",
+    "white bear", "ホワイトベア", "hills", "ヒルズ", "オフィス8番",
+)
+
+# `[251114][Queen Bee]作品名...` —— 日期前缀 + 制作组方括号，是里番发布的典型结构
+_RELEASE_PREFIX_RE = re.compile(r"^\s*\[\s*(?:\d{6}|\d{8})\s*\]\s*\[([^\]]{1,40})\]")
 
 # 集数标记，出现即强烈暗示这是分集动画而不是单体影片
 _EPISODE_MARKERS = re.compile(
@@ -214,6 +240,22 @@ def parse_number(filename: str) -> MatchInfo:
 # ---------------------------------------------------------------------------
 
 
+def _release_studio(filename: str) -> str | None:
+    """从 `[日期][制作组]作品名` 结构里取制作组，并核对是否在名单里。
+
+    只认这个结构，是为了避免"文件名里随便出现 Seven 就当里番"这类误判。
+    """
+    matched = _RELEASE_PREFIX_RE.match(filename)
+    if matched is None:
+        return None
+    raw = matched.group(1).strip()
+    lowered = raw.lower()
+    for studio in _JANIME_STUDIOS:
+        if studio in lowered:
+            return raw
+    return None
+
+
 def detect_by_path(path: str | Path) -> MatchInfo | None:
     """用整条路径的关键词判定内容类型。命中才返回。
 
@@ -227,6 +269,12 @@ def detect_by_path(path: str | Path) -> MatchInfo | None:
     for marker in _JANIME_MARKERS:
         if marker in lowered:
             evidence.append(f"路径含里番标记: {marker}")
+
+    if not evidence:
+        studio = _release_studio(Path(path).name)
+        if studio:
+            evidence.append(f"里番制作组标记: [{studio}]")
+
     if not evidence and _EPISODE_MARKERS.search(haystack):
         evidence.append("路径含集数标记（第N話/其のN/前編 等）")
 
