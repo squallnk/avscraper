@@ -210,6 +210,7 @@ async def test_janime_nfo_is_named_after_the_video(tmp_path):
     from xml.etree import ElementTree as ET
 
     root = ET.fromstring((media / f"{video.stem}.nfo").read_text(encoding="utf-8"))
+    # 目录里只有这一个视频 -> 独占目录 -> 剧集结构
     assert root.tag == "episodedetails"
     assert root.findtext("episode") == "4"
 
@@ -247,44 +248,57 @@ async def test_tvshow_nfo_only_in_a_dedicated_folder(tmp_path):
 
     扁平目录（一堆不同作品混在一起）里写它只会被后一个文件反复覆盖。
     """
+    from xml.etree import ElementTree as ET
+
     from server.pipeline import write_metadata
 
-    # 独占目录：只有一个视频
-    ctx, media = _ctx(tmp_path / "solo")
-    solo = media / "作品名 第1話.mp4"
-    solo.write_bytes(b"x")
     aggregated = AggregatedMetadata(
         number=None, content_type=ContentType.JANIME, metadata=MediaMetadata(title="作品名")
     )
+
+    # 按月归档的扁平目录：里面还有别的作品
+    ctx, media = _ctx(tmp_path / "month", extra_videos=3)
+    flat = media / "[251128][魔人]作品名 第四話.chs.mp4"
+    flat.write_bytes(b"x")
     written = await write_metadata(
         ctx,  # type: ignore[arg-type]
         metadata=aggregated.metadata,
         aggregated=aggregated,
         metadata_dir=media,
-        video_path=solo,
+        video_path=flat,
         season=1,
-        episode=1,
+        episode=4,
     )
-    assert "tvshow.nfo" in {p.name for p in written}
+    names = {p.name for p in written}
+    assert "tvshow.nfo" not in names
+    root = ET.fromstring((media / f"{flat.stem}.nfo").read_text(encoding="utf-8"))
+    assert root.tag == "movie"
 
-    # 扁平目录：还有别的视频
-    ctx2, media2 = _ctx(tmp_path / "flat", extra_videos=1)
-    flat = media2 / "作品名 第1話.mp4"
-    flat.write_bytes(b"x")
+    # 作品独占目录：只有这一个视频
+    ctx2, media2 = _ctx(tmp_path / "series")
+    solo = media2 / "作品名 第四話.mp4"
+    solo.write_bytes(b"x")
     written2 = await write_metadata(
         ctx2,  # type: ignore[arg-type]
         metadata=aggregated.metadata,
         aggregated=aggregated,
         metadata_dir=media2,
-        video_path=flat,
+        video_path=solo,
         season=1,
-        episode=1,
+        episode=4,
     )
-    assert "tvshow.nfo" not in {p.name for p in written2}
+    names2 = {p.name for p in written2}
+    assert "tvshow.nfo" in names2
+    root2 = ET.fromstring((media2 / f"{solo.stem}.nfo").read_text(encoding="utf-8"))
+    assert root2.tag == "episodedetails"
 
 
-async def test_janime_without_episode_writes_no_episode_nfo(tmp_path):
-    """解析不出集数时不写 episode NFO —— 宁缺勿编。"""
+async def test_janime_without_episode_does_not_invent_one(tmp_path):
+    """解析不出集数时**不编集号**。
+
+    但也不会因此什么都不写 —— 退回电影结构，Emby 至少能展示条目。
+    编一个假的 E01 才是真问题：Emby 里会冒出幽灵剧集。
+    """
     from server.pipeline import write_metadata
 
     ctx, media = _ctx(tmp_path)
@@ -303,7 +317,13 @@ async def test_janime_without_episode_writes_no_episode_nfo(tmp_path):
         episode=None,
     )
     names = {p.name for p in written}
-    assert f"{video.stem}.nfo" not in names
+
+    from xml.etree import ElementTree as ET
+
+    root = ET.fromstring((media / f"{video.stem}.nfo").read_text(encoding="utf-8"))
+    assert root.tag == "movie"
+    assert root.find("episode") is None          # 没有编造集号
+    assert "tvshow.nfo" not in names             # 没有集数就不写剧集级文件
 
 
 async def test_movie_nfo_named_after_video(tmp_path):

@@ -109,8 +109,15 @@ def _record_id(path: Path) -> str:
 def _is_dedicated_folder(video_path: Path) -> bool:
     """视频所在目录是不是"这一部作品独占"。
 
-    决定要不要写 `tvshow.nfo`：它是**剧集级**文件。在"一个目录塞一堆不同作品"的
-    扁平结构里写它，只会被后一个文件反复覆盖；只有在独占目录里才有意义。
+    这个判据决定**用哪种 NFO 结构**，不是随便挑的：
+
+    - **独占目录**（目录里只有这一个视频）→ 这是"一部作品/剧集"结构：
+      写 `tvshow.nfo`（剧集级）+ `{视频名}.nfo`（episodedetails）。
+    - **扁平目录**（一堆不同作品混放，例如"按月归档"的月份文件夹）→
+      每部作品都是独立的，写电影结构 `{视频名}.nfo`（movie）。
+
+    写反了都会出问题：扁平目录里写 tvshow.nfo 会被反复覆盖；
+    而把一集写成 movie，Emby 在有剧集结构时又读不到。
     """
     try:
         siblings = [f for f in video_path.parent.iterdir() if is_video_file(f.name)]
@@ -149,21 +156,22 @@ async def write_metadata(
         return []
 
     try:
-        if aggregated.content_type is ContentType.JANIME:
-            # 剧集级文件只在作品独占目录里写，否则扁平结构下会互相覆盖
-            if video_path is not None and _is_dedicated_folder(video_path):
-                written.append(
-                    ctx.storage.write_text(
-                        metadata_dir / "tvshow.nfo", build_tvshow_nfo(aggregated)
-                    )
+        as_episode = (
+            aggregated.content_type is ContentType.JANIME
+            and video_path is not None
+            and _is_dedicated_folder(video_path)
+            and episode is not None
+        )
+        if as_episode:
+            written.append(
+                ctx.storage.write_text(metadata_dir / "tvshow.nfo", build_tvshow_nfo(aggregated))
+            )
+            written.append(
+                ctx.storage.write_text(
+                    metadata_dir / f"{stem}.nfo",
+                    build_episode_nfo(aggregated, season=season or 1, episode=episode),
                 )
-            if episode is not None:
-                written.append(
-                    ctx.storage.write_text(
-                        metadata_dir / f"{stem}.nfo",
-                        build_episode_nfo(aggregated, season=season or 1, episode=episode),
-                    )
-                )
+            )
         else:
             written.append(
                 ctx.storage.write_text(metadata_dir / f"{stem}.nfo", build_movie_nfo(aggregated))
