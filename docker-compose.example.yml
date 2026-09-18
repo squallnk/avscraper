@@ -1,0 +1,20 @@
+# 示例：部署到 Unraid。第一次务必只挂测试目录。
+services:
+  avscraper:
+    build: .
+    image: avscraper:local
+    container_name: avscraper
+    restart: unless-stopped
+    ports:
+      - "9300:9300"
+    environment:
+      - AVS_HOST=0.0.0.0
+      - AVS_PORT=9300
+      - AVS_DATA_DIR=/app/data
+      - AVS_LOG_LEVEL=INFO
+      # 只允许访问测试目录；正式库先不要写进来
+      - AVS_ALLOWED_ROOTS=/media/115test
+    volumes:
+      - /mnt/user/appdata/avscraper:/app/data
+      # 115 网盘 Test 目录（经 CloudDrive2 挂载）
+      - /mnt/user/File_Shared2/115/Test:/media/115test

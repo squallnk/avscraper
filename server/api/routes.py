@@ -1,0 +1,402 @@
+"""HTTP 路由。
+
+约定：
+- 所有写操作（改配置、启动任务）都要显式 `confirm=true`，避免误触；
+- `/api/classify` 只做解析不联网，用来在 WebUI 上先确认分类对不对；
+- 错误统一返回 `{"detail": "..."}`，不泄漏栈。
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Header, HTTPException, Request, Response
+from pydantic import BaseModel, Field
+
+from server.classify import classify
+from server.config import ImageDownloadConfig, Settings
+from server.models import CONTENT_TYPE_LABELS, ScrapeStatus, StorageProvider
+from server.organize import TemplateError, render
+from server.sources import all_sources
+from server.sources import get as source_by_id
+from server.storage import OutsideAllowedRoots, StorageError
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api")
+
+
+def get_ctx(request: Request) -> Any:
+    ctx = getattr(request.app.state, "ctx", None)
+    if ctx is None:
+        raise HTTPException(status_code=503, detail="服务尚未就绪")
+    return ctx
+
+
+# ---------------------------------------------------------------- 系统
+
+
+@router.get("/health")
+async def health(request: Request) -> dict[str, Any]:
+    ctx = get_ctx(request)
+    return {
+        "status": "ok",
+        "data_dir": str(ctx.settings.data_dir),
+        "allowed_roots": [str(r) for r in ctx.storage.guard.roots],
+        "writes_enabled": ctx.storage.writes_enabled,
+        "dry_run": ctx.config.dry_run,
+        "organize_enabled": ctx.config.organize_enabled,
+        "queue_depth": ctx.runner.depth,
+        "sources": len(all_sources()),
+    }
+
+
+@router.get("/settings")
+async def read_settings(request: Request) -> Settings:
+    return get_ctx(request).settings
+
+
+# ---------------------------------------------------------------- 配置
+
+
+class ConfigPatch(BaseModel):
+    """运行期配置的部分更新。只给要改的字段。"""
+
+    dry_run: bool | None = None
+    organize_enabled: bool | None = None
+    file_op_rate: float | None = Field(default=None, gt=0, le=60)
+    file_op_burst: int | None = Field(default=None, ge=1, le=100)
+    http_rate: float | None = Field(default=None, gt=0, le=60)
+    http_burst: int | None = Field(default=None, ge=1, le=100)
+    cooldown_seconds: float | None = Field(default=None, ge=1, le=3600)
+    failure_threshold: int | None = Field(default=None, ge=1, le=20)
+    max_retries: int | None = Field(default=None, ge=0, le=5)
+    request_timeout: float | None = Field(default=None, ge=1, le=180)
+    proxy: str | None = None
+    enabled_sources: list[str] | None = None
+    field_priority: dict[str, list[str]] | None = None
+    route_override: dict[str, list[str]] | None = None
+    directory_template: str | None = None
+    filename_template: str | None = None
+    metadata_dir: str | None = None
+    cd2_mappings: list[list[str]] | None = None
+    webhook_enabled: bool | None = None
+    webhook_token: str | None = None
+    webhook_debounce_seconds: float | None = Field(default=None, ge=0, le=600)
+    webhook_max_subtree_files: int | None = Field(default=None, ge=1, le=100000)
+    webhook_auto_scrape: bool | None = None
+    source_cookies: dict[str, str] | None = None
+    images: ImageDownloadConfig | None = None
+
+
+@router.get("/config")
+async def read_config(request: Request) -> dict[str, Any]:
+    """密钥字段一律掩码回显，明文只留在服务端。"""
+    return get_ctx(request).config.redacted()
+
+
+@router.put("/config")
+async def write_config(patch: ConfigPatch, request: Request) -> dict[str, Any]:
+    """部分更新。密钥字段传掩码表示"不改"，传空串表示"清除"。"""
+    ctx = get_ctx(request)
+    try:
+        updated = ctx.config.with_patch(patch.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await ctx.save_config(updated)
+    return ctx.config.redacted()
+
+
+@router.get("/sources/{source_id}/cookie")
+async def read_source_cookie(source_id: str, request: Request) -> dict[str, Any]:
+    ctx = get_ctx(request)
+    plugin = source_by_id(source_id)
+    if plugin is None:
+        raise HTTPException(status_code=404, detail="未知数据源")
+    value = ctx.config.source_cookies.get(source_id, "")
+    return {
+        "source": source_id,
+        "needs_cookie": plugin.descriptor.needs_cookie,
+        "configured": bool(value),
+        "length": len(value),
+    }
+
+
+class CookieRequest(BaseModel):
+    value: str
+
+
+@router.put("/sources/{source_id}/cookie")
+async def write_source_cookie(
+    source_id: str, payload: CookieRequest, request: Request
+) -> dict[str, Any]:
+    """单独设某个源的 Cookie。传空串等于清除。"""
+    ctx = get_ctx(request)
+    plugin = source_by_id(source_id)
+    if plugin is None:
+        raise HTTPException(status_code=404, detail="未知数据源")
+    if not plugin.descriptor.needs_cookie and payload.value:
+        # 不是错误，只是提醒：这个源本来不需要 Cookie
+        logger.info("源 %s 未声明需要 Cookie，仍然按请求设置", source_id)
+    updated = ctx.config.with_patch({"source_cookies": {source_id: payload.value}})
+    await ctx.save_config(updated)
+    return {"source": source_id, "configured": bool(ctx.config.source_cookies.get(source_id))}
+
+
+# ---------------------------------------------------------------- CloudDrive2 webhook
+
+
+@router.post("/webhooks/clouddrive", status_code=204)
+async def clouddrive_webhook(
+    payload: dict,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> Response:
+    """接收 CD2 的文件变更通知。
+
+    契约：
+    - 鉴权 `Authorization: Bearer <webhook_token>`（token 为空时不校验，仅供本机调试）；
+    - **立即返回 204**，解析与扫描放后台，避免 FUSE 子树扫描堵住 CD2；
+    - 载荷里的路径是 **CD2 虚拟路径**，不是宿主路径。
+    """
+    ctx = get_ctx(request)
+    if not ctx.config.webhook_enabled:
+        raise HTTPException(status_code=403, detail="webhook 未启用（webhook_enabled=false）")
+
+    token = ctx.config.webhook_token
+    if token:
+        provided = (authorization or "").removeprefix("Bearer ").strip()
+        if provided != token:
+            raise HTTPException(status_code=401, detail="webhook 令牌不正确")
+
+    from server.webhook import parse_payload
+
+    events, warnings = parse_payload(payload)
+    for warning in warnings:
+        logger.warning("CD2 webhook: %s", warning)
+    if events:
+        processor = getattr(request.app.state, "webhook", None)
+        if processor is None:
+            raise HTTPException(status_code=503, detail="webhook 处理器未初始化")
+        processor.schedule(events)
+    return Response(status_code=204)
+
+
+@router.get("/webhooks/status")
+async def webhook_status(request: Request) -> dict[str, Any]:
+    ctx = get_ctx(request)
+    processor = getattr(request.app.state, "webhook", None)
+    return {
+        "enabled": ctx.config.webhook_enabled,
+        "token_required": bool(ctx.config.webhook_token),
+        "debounce_seconds": ctx.config.webhook_debounce_seconds,
+        "auto_scrape": ctx.config.webhook_auto_scrape,
+        "mappings": ctx.config.cd2_mappings,
+        "pending_directories": processor.debouncer.pending if processor else 0,
+    }
+
+
+# ---------------------------------------------------------------- 解析
+
+
+class ClassifyRequest(BaseModel):
+    path: str
+
+
+@router.post("/classify")
+async def classify_path(payload: ClassifyRequest) -> dict[str, Any]:
+    result = classify(payload.path)
+    return {
+        "number": result.number,
+        "content_type": result.content_type.value,
+        "content_type_label": CONTENT_TYPE_LABELS.get(result.content_type, ""),
+        "season": result.season,
+        "episode": result.episode,
+        "cd": result.cd,
+        "episode_source": result.episode_source,
+        "confidence": result.confidence,
+        "evidence": result.evidence,
+    }
+
+
+class RenderRequest(BaseModel):
+    template: str
+    data: dict[str, str] = Field(default_factory=dict)
+
+
+@router.post("/render-template")
+async def render_template(payload: RenderRequest) -> dict[str, str]:
+    try:
+        return {"result": render(payload.template, payload.data)}
+    except TemplateError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------- 源
+
+
+@router.get("/sources")
+async def list_sources(request: Request) -> list[dict[str, Any]]:
+    ctx = get_ctx(request)
+    enabled = set(ctx.config.enabled_sources) if ctx.config.enabled_sources else None
+    return [
+        {
+            **plugin.descriptor.model_dump(mode="json"),
+            "active": enabled is None or plugin.id in enabled,
+        }
+        for plugin in all_sources()
+    ]
+
+
+@router.get("/sources/probe")
+async def probe_sources(request: Request) -> list[dict[str, Any]]:
+    """逐个源探测连通性。用于首次部署时确认容器能出去。"""
+    import socket
+
+    ctx = get_ctx(request)
+    report: list[dict[str, Any]] = []
+    for plugin in all_sources():
+        homepage = plugin.descriptor.homepage
+        if not homepage:
+            continue
+        host = homepage.split("//", 1)[-1].split("/", 1)[0]
+        try:
+            resolved: str = socket.gethostbyname(host)
+        except OSError as exc:
+            resolved = f"解析失败: {exc}"
+        entry: dict[str, Any] = {"source": plugin.id, "host": host, "resolved": resolved}
+        try:
+            result = await ctx.http.get(homepage, source=plugin.id)
+            entry.update(
+                {"ok": result.status == 200, "status": result.status,
+                 "elapsed_ms": result.elapsed_ms, "bytes": len(result.content)}
+            )
+        except Exception as exc:  # noqa: BLE001 - 探测就是把失败报出来
+            entry.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+        report.append(entry)
+    return report
+
+
+@router.get("/sources/health")
+async def sources_health(request: Request) -> dict[str, Any]:
+    return get_ctx(request).http.status()
+
+
+# ---------------------------------------------------------------- 任务
+
+
+class ScanRequest(BaseModel):
+    roots: list[str] = Field(default_factory=list)
+    recursive: bool = True
+    limit: int = 0
+    skip_known: bool = True
+    write_metadata: bool = False
+    metadata_dir: str | None = None
+    confirm: bool = False
+
+
+@router.post("/tasks/scan")
+async def start_scan(payload: ScanRequest, request: Request) -> dict[str, Any]:
+    ctx = get_ctx(request)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="需要 confirm=true 才会启动任务")
+    roots = payload.roots or [str(r) for r in ctx.settings.allowed_roots]
+    if not roots:
+        raise HTTPException(status_code=400, detail="未配置任何允许根目录")
+    for root in roots:
+        try:
+            ctx.storage.guard.check(root)
+        except OutsideAllowedRoots as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+    task = await ctx.runner.submit(
+        "scan_and_scrape",
+        {
+            "roots": roots,
+            "recursive": payload.recursive,
+            "limit": payload.limit,
+            "skip_known": payload.skip_known,
+            "write_metadata": payload.write_metadata,
+            "metadata_dir": payload.metadata_dir,
+        },
+    )
+    return {"task_id": task.id, "state": task.state}
+
+
+@router.get("/tasks")
+async def list_tasks(request: Request, limit: int = 50) -> list[dict[str, Any]]:
+    ctx = get_ctx(request)
+    return [
+        {
+            "id": t.id,
+            "kind": t.kind,
+            "state": t.state,
+            "message": t.message,
+            "current": t.current,
+            "total": t.total,
+            "error": t.error,
+            "result": t.result,
+        }
+        for t in ctx.runner.history(limit)
+    ]
+
+
+# ---------------------------------------------------------------- 记录
+
+
+@router.get("/records")
+async def list_records(
+    request: Request, status: str | None = None, limit: int = 100
+) -> list[dict[str, Any]]:
+    ctx = get_ctx(request)
+    parsed = None
+    if status:
+        try:
+            parsed = ScrapeStatus(status)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"未知状态: {status}") from exc
+    records = await ctx.db.list_records(status=parsed, limit=limit)
+    return [r.model_dump(mode="json") for r in records]
+
+
+@router.get("/records/{record_id}")
+async def get_record(record_id: str, request: Request) -> dict[str, Any]:
+    ctx = get_ctx(request)
+    record = await ctx.db.get_record(record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return record.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------- 日志
+
+
+@router.get("/logs")
+async def list_logs(request: Request, limit: int = 200, level: str | None = None) -> list[dict[str, Any]]:
+    return await get_ctx(request).db.list_logs(limit=limit, level=level)
+
+
+# ---------------------------------------------------------------- 文件浏览（只读）
+
+
+@router.get("/browse")
+async def browse(request: Request, path: str) -> dict[str, Any]:
+    ctx = get_ctx(request)
+    try:
+        entries = ctx.storage.list_dir(Path(path))
+    except StorageError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {
+        "path": path,
+        "provider": StorageProvider.LOCAL.value,
+        "entries": [
+            {
+                "name": entry.name,
+                "path": str(entry),
+                "is_dir": entry.is_dir(),
+                "size": entry.stat().st_size if entry.is_file() else 0,
+            }
+            for entry in entries
+        ],
+    }

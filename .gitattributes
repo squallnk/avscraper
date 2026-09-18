@@ -1,0 +1,10 @@
+# 统一换行符，避免在 Windows 上开发时满屏 "LF will be replaced by CRLF" 警告
+* text=auto eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.ico binary
+
+# 夹具与快照不要自动改行尾
+tests/fixtures/*.html -text
