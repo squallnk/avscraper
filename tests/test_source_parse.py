@@ -21,7 +21,7 @@ javdb 的演员链接混着男演员、剧照列表混着封面。
 import pytest
 from conftest import load_fixture
 
-from server.sources.base import SourceError
+from server.sources.base import SourceBlocked, SourceError
 from server.sources.freejavbt import (
     parse_description as freejavbt_description,
 )
@@ -139,6 +139,28 @@ def test_javdb_fanart_excludes_cover(javdb_detail_html):
     assert meta.fanart_urls
     assert all("/covers/" not in url for url in meta.fanart_urls)
     assert meta.poster_url and "/covers/" in meta.poster_url
+
+
+def test_javdb_login_wall_is_reported_as_blocked_not_parse_error():
+    """javdb 把里番条目挡在登录墙后面，返回的是 HTTP 200 的登录页。
+
+    必须识别出来并报 blocked —— 否则会被误报成"选择器失效"，排障时查错方向。
+    """
+    login_html = (
+        '<html><head><title>登入 | JavDB 成人影片數據庫</title></head>'
+        '<body><form action="/login">captcha</form></body></html>'
+    )
+    with pytest.raises(SourceBlocked) as excinfo:
+        javdb_detail(login_html, "AqXvxO")
+    assert "登入" in str(excinfo.value) or "登录" in str(excinfo.value)
+    assert "Cookie" in str(excinfo.value)
+
+
+def test_javdb_declares_cookie_requirement():
+    """设置页靠这个标记决定要不要显示该源的 Cookie 输入框。"""
+    from server.sources.javdb import PLUGIN as javdb_plugin
+
+    assert javdb_plugin.descriptor.needs_cookie is True
 
 
 def test_javdb_parse_error_on_unknown_layout():

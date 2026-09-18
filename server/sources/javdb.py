@@ -25,6 +25,17 @@ BASE = "https://javdb.com"
 _DATE = re.compile(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})")
 _DETAIL_LINK = re.compile(r"^/v/[A-Za-z0-9]+$")
 
+# javdb 把**里番 / 動漫分区**的条目挡在登录墙后面：未登录时详情页返回的是登录页
+# （HTTP 200，长度约 26KB，<title>登入 | JavDB…），不是 403。
+# 有码/无码条目不需要登录 —— 实测 MIDV-123 匿名可读。
+# 所以必须显式识别登录页，否则会被误报成"选择器失效"。
+_LOGIN_MARKERS = ("<title>登入", "登入 | JavDB", "登入|JavDB")
+
+
+def _looks_like_login(html: str) -> bool:
+    head = html[:6000]
+    return any(marker in head for marker in _LOGIN_MARKERS)
+
 
 def parse_search(html: str) -> str | None:
     """从搜索结果页取第一个详情页链接。"""
@@ -54,6 +65,12 @@ def parse_detail(html: str, number: str) -> MediaMetadata:
     番號 / 日期 / 時長 / 導演 / 片商 / 評分 / 類別 / 演員。
     **評分不在 `.score` 里**（那个选择器在本站不存在），必须从面板取值。
     """
+    if _looks_like_login(html):
+        raise SourceBlocked(
+            "javdb 要求登录才能访问该条目（里番/動漫分区有登录墙）。"
+            "请在「设置 → 站点 Cookie」里填入 javdb 的 Cookie。"
+        )
+
     soup: BeautifulSoup = soup_of(html)
     if soup.select_one(".age-verify, .modal-title") and not soup.select_one(".movie-panel-info"):
         raise SourceBlocked("javdb 返回年龄确认或拦截页")
@@ -147,7 +164,8 @@ class JavdbSource(SourcePlugin):
             ContentType.JANIME,
         ],
         needs_proxy=True,
-        note="综合索引，动漫分区可作里番兜底。不解析 plot；常见版权地域拦截。",
+        needs_cookie=True,
+        note="综合索引。有码/无码条目匿名可读；**里番/動漫分区需要登录**，要填 Cookie。不解析 plot。",
     )
 
     async def fetch(self, client: object, ctx: FetchContext) -> MediaMetadata | None:
