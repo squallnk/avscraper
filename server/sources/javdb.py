@@ -165,6 +165,7 @@ class JavdbSource(SourcePlugin):
         ],
         needs_proxy=True,
         needs_cookie=True,
+        cookie_probe_query="ドSなペット",
         note="综合索引。有码/无码条目匿名可读；**里番/動漫分区需要登录**，要填 Cookie。不解析 plot。",
     )
 

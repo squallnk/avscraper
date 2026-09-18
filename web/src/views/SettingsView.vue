@@ -7,6 +7,22 @@ const message = useMessage()
 const config = ref<RuntimeConfig | null>(null)
 const sources = ref<SourceInfo[]>([])
 const cookieDraft = ref<Record<string, string>>({})
+const verifying = ref('')
+const verifyResult = ref<Record<string, { ok: boolean; reason: string; detail?: string }>>({})
+
+async function verifyCookie(id: string) {
+  verifying.value = id
+  try {
+    const r = await api.verifyCookie(id)
+    verifyResult.value[id] = { ok: Boolean(r.ok), reason: r.reason || '', detail: r.detail }
+    if (r.ok) message.success(`${id} 的 Cookie 有效`)
+    else message.warning(`${id}: ${r.detail || r.reason}`)
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e))
+  } finally {
+    verifying.value = ''
+  }
+}
 
 async function load() {
   try {
@@ -86,6 +102,16 @@ onMounted(load)
       <n-form-item label="代理">
         <n-input v-model:value="config.proxy" placeholder="http://127.0.0.1:7890 或 socks5://..." />
       </n-form-item>
+      <n-form-item label="User-Agent（留空用内置默认值）">
+        <n-input
+          v-model:value="config.user_agent"
+          placeholder="从浏览器 F12 → Network → Request Headers 里复制整串 User-Agent"
+        />
+      </n-form-item>
+      <n-alert type="warning" style="margin-bottom: 12px">
+        有些站点的 Cloudflare 会把 cf_clearance Cookie 与 User-Agent 绑定校验。
+        如果从浏览器复制的 Cookie 配上默认 UA 不生效，就把浏览器的 UA 也一起填进来。
+      </n-alert>
       <n-form-item label="目录模板">
         <n-input v-model:value="config.directory_template" />
       </n-form-item>
@@ -181,7 +207,21 @@ onMounted(load)
             style="width: 420px"
           />
           <n-button @click="saveCookie(source.id)">保存</n-button>
+          <n-button
+            :disabled="!source.cookie_probe_query"
+            :loading="verifying === source.id"
+            @click="verifyCookie(source.id)"
+          >
+            验证
+          </n-button>
           <n-button quaternary @click="clearCookie(source.id)">清除</n-button>
+          <n-tag
+            v-if="verifyResult[source.id]"
+            :type="verifyResult[source.id].ok ? 'success' : 'error'"
+            size="small"
+          >
+            {{ verifyResult[source.id].ok ? 'Cookie 有效' : verifyResult[source.id].reason }}
+          </n-tag>
         </n-space>
       </div>
     </n-space>

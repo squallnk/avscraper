@@ -68,6 +68,7 @@ class HttpClient:
         self._inflight: dict[str, asyncio.Lock] = {}
         # 站点特例：某些站需要登录态/年龄确认 Cookie，按源 id 注入。
         self._source_cookies: dict[str, str] = {}
+        self._user_agent = DEFAULT_UA
 
     async def __aenter__(self) -> HttpClient:
         await self.start()
@@ -82,7 +83,7 @@ class HttpClient:
         kwargs: dict[str, Any] = {
             "timeout": httpx.Timeout(self._timeout),
             "follow_redirects": True,
-            "headers": {"User-Agent": DEFAULT_UA, "Accept-Language": "zh-CN,zh;q=0.9,ja;q=0.8"},
+            "headers": {"User-Agent": self._user_agent, "Accept-Language": "zh-CN,zh;q=0.9,ja;q=0.8"},
         }
         if self._proxy and self._transport is None:
             kwargs["proxy"] = self._proxy
@@ -95,6 +96,14 @@ class HttpClient:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+    def set_user_agent(self, user_agent: str) -> None:
+        """设置 UA。
+
+        按请求带，而不是改客户端默认头 —— 改默认头要重建客户端，
+        而重建是异步的，会出现"配置改了但下一个请求还用旧 UA"的竞态窗口。
+        """
+        self._user_agent = (user_agent or "").strip() or DEFAULT_UA
 
     def set_source_cookies(self, cookies: dict[str, str]) -> None:
         self._source_cookies = {k: v for k, v in cookies.items() if v}
@@ -140,6 +149,7 @@ class HttpClient:
             started = time.monotonic()
             try:
                 request_headers = dict(headers or {})
+                request_headers["User-Agent"] = self._user_agent
                 cookie = self._source_cookies.get(source)
                 if cookie and "Cookie" not in request_headers:
                     request_headers["Cookie"] = cookie
@@ -180,7 +190,7 @@ class HttpClient:
         assert self._client is not None
         host = httpx.URL(url).host or ""
         await self._limiters.for_host(host).acquire()
-        headers: dict[str, str] = {}
+        headers: dict[str, str] = {"User-Agent": self._user_agent}
         if referer:
             headers["Referer"] = referer
         cookie = self._source_cookies.get(source)

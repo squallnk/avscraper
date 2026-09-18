@@ -145,6 +145,53 @@ async def test_get_bytes_sends_referer_and_cookie():
     assert seen == [("https://www.javbus.com", "sid=1")]
 
 
+async def test_custom_user_agent_is_sent():
+    """有些站点的 cf_clearance Cookie 与 UA 绑定，必须能改成浏览器的 UA。"""
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("user-agent", ""))
+        return httpx.Response(200, text="ok")
+
+    client = HttpClient(transport=httpx.MockTransport(handler))
+    await client.start()
+    try:
+        client.set_user_agent("MyBrowser/1.0 (Custom)")
+        await client.get("https://x.test/", source="javdb")
+    finally:
+        await client.close()
+    assert seen == ["MyBrowser/1.0 (Custom)"]
+
+
+async def test_empty_user_agent_falls_back_to_default():
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("user-agent", ""))
+        return httpx.Response(200, text="ok")
+
+    client = HttpClient(transport=httpx.MockTransport(handler))
+    await client.start()
+    try:
+        client.set_user_agent("   ")
+        await client.get("https://x.test/", source="javdb")
+    finally:
+        await client.close()
+    assert seen and seen[0].startswith("Mozilla/5.0")
+
+
+def test_user_agent_defaults_to_empty_in_config():
+    """留空表示用内置默认值，不写死在配置里。"""
+    assert RuntimeConfig().user_agent == ""
+
+
+def test_javdb_declares_a_cookie_probe_query():
+    """验证接口靠这个字段决定能不能真的跑一次查询。"""
+    from server.sources.javdb import PLUGIN as javdb_plugin
+
+    assert javdb_plugin.descriptor.cookie_probe_query
+
+
 # ---------------------------------------------------------------- getchu 行为
 
 

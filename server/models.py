@@ -168,6 +168,9 @@ class SourceDescriptor(BaseModel):
     needs_proxy: bool = False
     needs_cookie: bool = False
     """站点有年龄确认/登录墙，需要用户在设置里填该站 Cookie 才可用。"""
+
+    cookie_probe_query: str = ""
+    """验证 Cookie 时用哪个关键词走一遍真实查询。留空表示该源不支持验证。"""
     note: str = ""
     enabled: bool = True
 

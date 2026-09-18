@@ -22,6 +22,7 @@ export interface RuntimeConfig {
   max_retries: number
   request_timeout: number
   proxy: string
+  user_agent: string
   enabled_sources: string[]
   field_priority: Record<string, string[]>
   route_override: Record<string, string[]>
@@ -66,6 +67,7 @@ export interface SourceInfo {
   supports: string[]
   needs_proxy: boolean
   needs_cookie: boolean
+  cookie_probe_query: string
   note: string
   active: boolean
 }
@@ -130,6 +132,10 @@ export const api = {
     call<RuntimeConfig>('/api/config', { method: 'PUT', body: JSON.stringify(patch) }),
   sources: () => call<SourceInfo[]>('/api/sources'),
   cookieStatus: (id: string) => call<CookieStatus>(`/api/sources/${id}/cookie`),
+  verifyCookie: (id: string) =>
+    call<{ supported: boolean; ok?: boolean; reason?: string; detail?: string }>(
+      `/api/sources/${id}/cookie/verify`,
+    ),
   setCookie: (id: string, value: string) =>
     call<{ source: string; configured: boolean }>(`/api/sources/${id}/cookie`, {
       method: 'PUT',

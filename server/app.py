@@ -59,6 +59,7 @@ class AppContext:
         )
         self.breaker.configure(self.config.cooldown_seconds, self.config.failure_threshold)
         self.http.set_source_cookies(self.config.source_cookies)
+        self.http.set_user_agent(self.config.user_agent)
         self.aggregator = Aggregator(self.http, enabled_sources=self.config.enabled_sources)
         if self.webhook is not None:
             self.webhook.reconfigure()
@@ -91,6 +92,7 @@ async def build_context(settings: Settings) -> AppContext:
 
     await http.start()
     http.set_source_cookies(config.source_cookies)
+    http.set_user_agent(config.user_agent)
 
     aggregator = Aggregator(http, enabled_sources=config.enabled_sources)
     file_limiter = RateLimiter(config.file_op_rate, config.file_op_burst)

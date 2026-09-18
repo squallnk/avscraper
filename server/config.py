@@ -119,6 +119,14 @@ class RuntimeConfig(BaseModel):
     proxy: str = ""
     """如 http://127.0.0.1:7890 或 socks5://... 。"""
 
+    user_agent: str = ""
+    """自定义 User-Agent。留空用内置默认值。
+
+    有些站点的 Cloudflare 会做 `cf_clearance` Cookie 与 UA 的绑定校验 ——
+    从浏览器复制出来的 Cookie 只有配上**同一个 UA** 才有效。
+    所以填 Cookie 时通常要同时把浏览器的 UA 一起填进来。
+    """
+
     # ---- CD2 / Webhook ----
     cd2_mappings: list[list[str]] = Field(default_factory=list)
     """CD2 虚拟路径前缀 -> 本地挂载点，最长前缀优先。

@@ -88,6 +88,7 @@ class ConfigPatch(BaseModel):
     webhook_max_subtree_files: int | None = Field(default=None, ge=1, le=100000)
     webhook_auto_scrape: bool | None = None
     source_cookies: dict[str, str] | None = None
+    user_agent: str | None = None
     images: ImageDownloadConfig | None = None
 
 
@@ -121,6 +122,46 @@ async def read_source_cookie(source_id: str, request: Request) -> dict[str, Any]
         "needs_cookie": plugin.descriptor.needs_cookie,
         "configured": bool(value),
         "length": len(value),
+    }
+
+
+@router.get("/sources/{source_id}/cookie/verify")
+async def verify_source_cookie(source_id: str, request: Request) -> dict[str, Any]:
+    """用该源真实跑一次查询，判断 Cookie 到底有没有生效。
+
+    这是排障用的：Cookie 填了但抓不到时，需要区分
+    「Cookie 无效」和「站点本来就没这个条目」。
+    """
+    ctx = get_ctx(request)
+    plugin = source_by_id(source_id)
+    if plugin is None:
+        raise HTTPException(status_code=404, detail="未知数据源")
+
+    probe = plugin.descriptor.cookie_probe_query
+    if not probe:
+        return {"supported": False, "detail": "该源不支持 Cookie 验证"}
+
+    from server.models import ContentType
+    from server.sources.base import FetchContext, SourceBlocked
+
+    context = FetchContext(query=probe, content_type=ContentType.JANIME)
+    try:
+        metadata = await plugin.fetch(ctx.http, context)
+    except SourceBlocked as exc:
+        return {"supported": True, "ok": False, "reason": "blocked", "detail": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - 验证接口就是把失败报出来
+        return {
+            "supported": True,
+            "ok": False,
+            "reason": type(exc).__name__,
+            "detail": str(exc)[:300],
+        }
+
+    return {
+        "supported": True,
+        "ok": metadata is not None,
+        "reason": "" if metadata else "not_found",
+        "detail": "Cookie 有效" if metadata else "请求成功但没有结果，可能是关键词不匹配",
     }
 
 
