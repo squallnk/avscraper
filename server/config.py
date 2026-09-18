@@ -123,7 +123,7 @@ class RuntimeConfig(BaseModel):
     cd2_mappings: list[list[str]] = Field(default_factory=list)
     """CD2 虚拟路径前缀 -> 本地挂载点，最长前缀优先。
 
-    例：[["/115open/Test", "/mnt/user/File_Shared2/115/Test"]]
+    例：[["/115open/Test", "/mnt/user/clouddrive/115/Test"]]
     """
 
     webhook_enabled: bool = False

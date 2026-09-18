@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/squallnk/avscraper/issues</Support>
   <Project>https://github.com/squallnk/avscraper</Project>
-  <Overview>番号 / 里番元数据刮削器，为 CloudDrive2 + Symedia + Emby 体系设计。&#13;&#13;特点：&#13;• 不直连 115 —— 只经 CloudDrive2 的挂载路径读写，凭证始终只留在 CD2 一处&#13;• 默认只读 —— dry_run 与 organize_enabled 全关时不会移动、改名或删除任何文件&#13;• 防风控 —— 文件操作串行 + 令牌桶限速 + 指数退避 + 按源熔断&#13;• 不负责归档 —— 文件整理交给 Symedia，本项目只产出 NFO 与图片&#13;&#13;数据源：getchu（里番第一源）/ javbus / javdb / freejavbt，均用真实页面固件回归。&#13;&#13;首次使用务必只指向测试目录，按文档里的五步顺序验证后再扩大范围。&#13;&#13;网络：容器默认继承 Unraid 的路由与 DNS。若日志里出现域名解析失败，在容器网络设置里把 DNS 显式指向旁路由（例如 192.168.0.252）。</Overview>
+  <Overview>番号 / 里番元数据刮削器，为 CloudDrive2 + Symedia + Emby 体系设计。&#13;&#13;特点：&#13;• 不直连 115 —— 只经 CloudDrive2 的挂载路径读写，凭证始终只留在 CD2 一处&#13;• 默认只读 —— dry_run 与 organize_enabled 全关时不会移动、改名或删除任何文件&#13;• 防风控 —— 文件操作串行 + 令牌桶限速 + 指数退避 + 按源熔断&#13;• 不负责归档 —— 文件整理交给 Symedia，本项目只产出 NFO 与图片&#13;&#13;数据源：getchu（里番第一源）/ javbus / javdb / freejavbt，均用真实页面固件回归。&#13;&#13;首次使用务必只指向测试目录，按文档里的五步顺序验证后再扩大范围。&#13;&#13;网络：容器默认继承 Unraid 的路由与 DNS。若日志里出现域名解析失败，在容器网络设置里把 DNS 显式指向旁路由（例如你旁路由的地址）。</Overview>
   <Category>MediaApp:Video MediaServer:Video Tools:</Category>
   <WebUI>http://[IP]:[PORT:9300]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/squallnk/avscraper/main/unraid/avscraper.xml</TemplateURL>
@@ -23,7 +23,7 @@
   <Requires/>
   <Config Name="WebUI 端口" Target="9300" Default="9300" Mode="tcp" Description="Web 界面与 API 端口。不要和已有容器冲突（本项目默认 9300）。" Type="Port" Display="always" Required="true" Mask="false">9300</Config>
   <Config Name="数据目录" Target="/app/data" Default="/mnt/user/appdata/avscraper" Mode="rw" Description="SQLite 数据库与运行期配置。升级容器不会丢，但删掉就等于重置。" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/avscraper</Config>
-  <Config Name="媒体目录（测试用）" Target="/media/media" Default="" Mode="rw" Description="要刮削的媒体目录。建议先只挂一个测试目录，确认分类与刮削结果无误后再扩大范围。可以挂多个（例如 115 与本地库分开）。" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/File_Shared2/115/Test</Config>
+  <Config Name="媒体目录（测试用）" Target="/media/media" Default="" Mode="rw" Description="要刮削的媒体目录。建议先只挂一个测试目录，确认分类与刮削结果无误后再扩大范围。可以挂多个（例如 115 与本地库分开）。" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/clouddrive/115/Test</Config>
   <Config Name="允许访问的根目录" Target="AVS_ALLOWED_ROOTS" Default="/media/media" Mode="" Description="安全白名单：容器内允许读写/移动的根目录，逗号分隔。留空表示禁止一切访问。必须与上面「媒体目录」映射到的容器内路径一致，写错只会在日志里报越界，不会误写别处。" Type="Variable" Display="always" Required="true" Mask="false">/media/media</Config>
   <Config Name="监听地址" Target="AVS_HOST" Default="0.0.0.0" Mode="" Description="容器内监听地址。要让局域网访问必须保持 0.0.0.0。" Type="Variable" Display="advanced" Required="false" Mask="false">0.0.0.0</Config>
   <Config Name="内部端口" Target="AVS_PORT" Default="9300" Mode="" Description="容器内监听端口。改了它就要同步改上面的「WebUI 端口」映射。" Type="Variable" Display="advanced" Required="false" Mask="false">9300</Config>

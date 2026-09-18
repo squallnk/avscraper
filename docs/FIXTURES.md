@@ -15,7 +15,8 @@
 本项目开发机对 javbus / javdb / freejavbt / github.com 都不通，
 所以用「在能访问的机器上抓、再拷回开发机」的方式。
 
-以 Unraid 为例（该机器能访问这些站点，且共享目录对开发机可见）：
+以 Unraid 为例（该机器能访问这些站点，且共享目录对开发机可见）。
+下面用 `<你的NAS>` 代表设备名或 IP：
 
 ```bash
 mkdir -p /mnt/user/appdata/avscraper-capture
@@ -38,7 +39,7 @@ ls -la
 然后在开发机上从共享目录拷进仓库：
 
 ```bash
-cp "//192.168.0.254/appdata/avscraper-capture/"*.html tests/fixtures/
+cp "//<你的NAS>/appdata/avscraper-capture/"*.html tests/fixtures/
 ```
 
 ## 判定抓到的页面可用

@@ -19,14 +19,14 @@
 | 项 | 值 |
 |---|---|
 | 115 网盘目录 | `/Test` |
-| Unraid 挂载路径 | `/mnt/user/File_Shared2/115/Test` |
+| Unraid 挂载路径 | `/mnt/user/clouddrive/115/Test` |
 | **CD2 虚拟路径** | **`/115/Test`**（来自 CD2 网页 `?page=files&path=%2F115%2FTest`） |
 
 容器里：
 
 ```
 AVS_ALLOWED_ROOTS=/media/115test
--v /mnt/user/File_Shared2/115/Test:/media/115test
+-v /mnt/user/clouddrive/115/Test:/media/115test
 ```
 
 **CD2 虚拟路径与本地路径是两套坐标**：webhook 推来的是 `/115/Test/...` 这种 VFS 字符串，
