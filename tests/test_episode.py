@@ -171,7 +171,6 @@ def _ctx(tmp_path, *, extra_videos: int = 0):
     config = RuntimeConfig(organize_enabled=True, dry_run=False)
     # 这个用例只关心 NFO，把图片下载全关掉
     config.images.poster = False
-    config.images.thumb = False
     config.images.fanart = False
     config.images.extrafanart = False
     for index in range(extra_videos):

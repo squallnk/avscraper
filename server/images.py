@@ -10,7 +10,6 @@
 文件名按 Emby / Jellyfin 的约定，以视频文件名为前缀：
 ```
 {stem}-poster.jpg      海报
-{stem}-thumb.jpg       缩略图
 {stem}-fanart.jpg      背景图
 extrafanart/{stem}-01.jpg   剧照
 ```
@@ -82,11 +81,6 @@ def plan_images(metadata: MediaMetadata, config: ImageDownloadConfig, *, stem: s
     if config.poster and metadata.poster_url:
         tasks.append(
             ImageTask("poster", _dedupe([metadata.poster_url]), Path(f"{stem}-poster{IMAGE_SUFFIX}"))
-        )
-
-    if config.thumb and metadata.thumb_urls:
-        tasks.append(
-            ImageTask("thumb", _dedupe(metadata.thumb_urls), Path(f"{stem}-thumb{IMAGE_SUFFIX}"))
         )
 
     fanart_candidates = _dedupe(metadata.fanart_urls)

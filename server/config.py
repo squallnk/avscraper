@@ -62,12 +62,18 @@ SECRET_MASK = "***"
 class ImageDownloadConfig(BaseModel):
     """图片下载选择。
 
-    剧照（extrafanart）体积大、张数多，默认关闭 —— 它们只是详情页的观感增强，
-    对 Emby 的识别没有任何影响。海报与缩略图默认开启，因为 Emby 靠它们展示条目。
+    只下海报与背景图：
+    - **海报**决定 Emby 列表封面，必须有；
+    - **背景图**（fanart）决定详情页大图；
+    - 剧照（extrafanart）体积大、张数多，默认关闭，只影响详情页观感。
+
+    ``thumb`` 曾经也有，但它唯一的数据来源是站点那批 120x90 的缩略图
+    （javdb / freejavbus 的"剧照"就是它），拉到 Emby 卡片里只会糊成一片。
+    Emby 自己从封面/截图生成的效果更好，所以这个能力直接去掉了。
+    元数据模型里仍保留 ``thumb_urls``（源照常上报），只是不再用它下载。
     """
 
     poster: bool = True
-    thumb: bool = True
     fanart: bool = False
     extrafanart: bool = False
     extrafanart_limit: int = Field(default=5, ge=1, le=50)

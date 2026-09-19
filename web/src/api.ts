@@ -43,7 +43,6 @@ export interface RuntimeConfig {
 
 export interface ImageDownloadConfig {
   poster: boolean
-  thumb: boolean
   fanart: boolean
   extrafanart: boolean
   extrafanart_limit: number

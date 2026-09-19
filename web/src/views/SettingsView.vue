@@ -124,15 +124,13 @@ onMounted(load)
 
   <n-card v-if="config" title="图片下载" style="margin-top: 16px">
     <n-alert type="info" style="margin-bottom: 12px">
-      海报与缩略图决定 Emby 里条目的展示，建议保持开启。
-      <b>剧照体积大、张数多</b>，只影响详情页观感，默认关闭；需要时再打开并限制张数。
+      海报决定 Emby 列表封面，建议保持开启。缩略图不再下载 —— 站点的缩略图只有
+      120x90，Emby 自己从封面生成的效果更好。<b>剧照体积大、张数多</b>，
+      只影响详情页观感，默认关闭；需要时再打开并限制张数。
     </n-alert>
     <n-space vertical>
       <n-form-item label="海报 poster（Emby 列表封面）">
         <n-switch v-model:value="config.images.poster" />
-      </n-form-item>
-      <n-form-item label="缩略图 thumb">
-        <n-switch v-model:value="config.images.thumb" />
       </n-form-item>
       <n-form-item label="背景图 fanart（详情页大图）">
         <n-switch v-model:value="config.images.fanart" />

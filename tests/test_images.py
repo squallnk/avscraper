@@ -30,10 +30,46 @@ def _metadata(**kwargs) -> MediaMetadata:
 # ---------------------------------------------------------------- 计划
 
 
-def test_default_only_downloads_poster_and_thumb():
-    """剧照默认关闭 —— 体积大、张数多，用户要能自己决定。"""
+def test_default_only_downloads_poster():
+    """默认只下海报：背景图与剧照都要用户自己决定。"""
     tasks = plan_images(_metadata(), ImageDownloadConfig(), stem="MIDV-123")
-    assert [t.kind for t in tasks] == ["poster", "thumb"]
+    assert [t.kind for t in tasks] == ["poster"]
+
+
+def test_config_from_a_previous_version_still_loads():
+    r"""去掉 ``thumb`` 是一次**单向下线**：库里存的配置 JSON 还带着这个键。
+
+    必须照样能加载 —— 配置文件在数据库里，报错的话用户没法手工"修一下"，
+    而 ``from_json`` 又会把异常吞掉退成默认值（等于把用户所有设置悄悄清空）。
+    这里连值一起断言，不只看"没抛异常"。
+    """
+    from server.config import RuntimeConfig
+
+    old = (
+        '{"dry_run": false, "organize_enabled": true,'
+        ' "images": {"poster": false, "thumb": true, "fanart": true,'
+        ' "extrafanart_limit": 7, "fanart_min_width": 640}}'
+    )
+    config = RuntimeConfig.from_json(old)
+
+    assert config.dry_run is False
+    assert config.organize_enabled is True
+    assert config.images.poster is False
+    assert config.images.fanart is True
+    assert config.images.extrafanart_limit == 7
+    assert config.images.fanart_min_width == 640
+    assert not hasattr(config.images, "thumb")
+
+
+def test_thumb_urls_are_never_downloaded():
+    """缩略图能力已经去掉，源上报的 thumb_urls 不再产生任何下载任务。
+
+    它唯一的数据来源是站点那批 120x90 的缩略图，拉到 Emby 卡片里只会糊成一片；
+    Emby 自己从封面/截图生成的效果更好。元数据模型里仍保留这个字段（源照常上报）。
+    """
+    assert _metadata().thumb_urls  # 前提：元数据里确实有
+    tasks = plan_images(_metadata(), ImageDownloadConfig(), stem="MIDV-123")
+    assert not [t for t in tasks if t.kind == "thumb"]
 
 
 def test_extrafanart_respects_limit():
@@ -63,7 +99,7 @@ def test_extrafanart_starts_at_first_when_fanart_disabled():
 
 
 def test_all_off_produces_nothing():
-    config = ImageDownloadConfig(poster=False, thumb=False, fanart=False, extrafanart=False)
+    config = ImageDownloadConfig(poster=False, fanart=False, extrafanart=False)
     assert plan_images(_metadata(), config, stem="X") == []
 
 
@@ -78,7 +114,7 @@ def test_candidate_urls_are_deduped():
         fanart_urls=["https://a/1.jpg", "https://a/1.jpg", "https://a/2.jpg"],
         poster_url="https://a/cover.jpg",
     )
-    config = ImageDownloadConfig(poster=False, thumb=False, fanart=True)
+    config = ImageDownloadConfig(poster=False, fanart=True)
     tasks = plan_images(meta, config, stem="X")
     # 去重后保序，末尾垫上封面当大图兜底
     assert tasks[0].candidates == ["https://a/1.jpg", "https://a/2.jpg", "https://a/cover.jpg"]
@@ -87,7 +123,7 @@ def test_candidate_urls_are_deduped():
 def test_fanart_puts_cover_last_not_first():
     """封面是兜底，不能抢占真正的背景图候选。"""
     meta = _metadata(fanart_urls=["https://a/1.jpg"], poster_url="https://a/cover.jpg")
-    tasks = plan_images(meta, ImageDownloadConfig(poster=False, thumb=False, fanart=True), stem="X")
+    tasks = plan_images(meta, ImageDownloadConfig(poster=False, fanart=True), stem="X")
     assert tasks[0].candidates[0] == "https://a/1.jpg"
     assert tasks[0].candidates[-1] == "https://a/cover.jpg"
 
@@ -95,7 +131,7 @@ def test_fanart_puts_cover_last_not_first():
 def test_fanart_candidates_have_no_duplicate_of_cover():
     """封面已经出现在剧照列表里时，不要再追加一次。"""
     meta = _metadata(fanart_urls=["https://a/cover.jpg"], poster_url="https://a/cover.jpg")
-    tasks = plan_images(meta, ImageDownloadConfig(poster=False, thumb=False, fanart=True), stem="X")
+    tasks = plan_images(meta, ImageDownloadConfig(poster=False, fanart=True), stem="X")
     assert tasks[0].candidates == ["https://a/cover.jpg"]
 
 
@@ -156,12 +192,7 @@ async def test_no_write_when_writes_disabled(tmp_path):
 
 
 async def test_downloads_enabled_types(tmp_path):
-    http = _FakeHttp(
-        {
-            "https://img.test/poster.jpg": b"p",
-            "https://img.test/thumb.jpg": b"t",
-        }
-    )
+    http = _FakeHttp({"https://img.test/poster.jpg": b"p"})
     ctx = _ctx(tmp_path, http)
     metadata_dir = tmp_path / "media" / "meta"
 
@@ -170,40 +201,51 @@ async def test_downloads_enabled_types(tmp_path):
         aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
         metadata_dir=metadata_dir,
     )
-    written = {p.name for p in report.written}
-    assert written == {"MIDV-123-poster.jpg", "MIDV-123-thumb.jpg"}
+    assert {p.name for p in report.written} == {"MIDV-123-poster.jpg"}
     assert (metadata_dir / "MIDV-123-poster.jpg").read_bytes() == b"p"
+    assert "https://img.test/thumb.jpg" not in http.calls
 
 
 async def test_falls_back_to_next_candidate(tmp_path):
     """第一张挂了要试下一张，不能整组失败。"""
     http = _FakeHttp(
         {
-            "https://img.test/thumb.jpg": HttpError("403"),
-            "https://img.test/thumb2.jpg": b"t2",
+            "https://img.test/s1.jpg": HttpError("403"),
+            "https://img.test/s2.jpg": b"s2",
         }
     )
-    ctx = _ctx(tmp_path, http)
-    metadata = _metadata(thumb_urls=["https://img.test/thumb.jpg", "https://img.test/thumb2.jpg"])
+    # 关掉宽度把关，让候选能走到下载这一步（那是另一组用例的事）
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(poster=False, fanart=True, fanart_min_width=0),
+    )
+    metadata = _metadata(
+        fanart_urls=["https://img.test/s1.jpg", "https://img.test/s2.jpg"], poster_url=None
+    )
 
     report = await ImageDownloader(ctx).run(  # type: ignore[arg-type]
         metadata=metadata,
         aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
         metadata_dir=tmp_path / "media" / "meta",
     )
-    assert http.calls == ["https://img.test/poster.jpg", "https://img.test/thumb.jpg", "https://img.test/thumb2.jpg"]
-    assert any(p.name == "MIDV-123-thumb.jpg" for p in report.written)
+    assert http.calls == ["https://img.test/s1.jpg", "https://img.test/s2.jpg"]
+    assert any(p.name == "MIDV-123-fanart.jpg" for p in report.written)
 
 
 async def test_all_candidates_failing_is_reported_not_raised(tmp_path):
-    http = _FakeHttp({"https://img.test/thumb.jpg": HttpError("403")})
-    ctx = _ctx(tmp_path, http)
+    http = _FakeHttp({"https://img.test/s1.jpg": HttpError("403")})
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(poster=False, fanart=True, fanart_min_width=0),
+    )
     report = await ImageDownloader(ctx).run(  # type: ignore[arg-type]
-        metadata=_metadata(),
+        metadata=_metadata(fanart_urls=["https://img.test/s1.jpg"], poster_url=None),
         aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
         metadata_dir=tmp_path / "media" / "meta",
     )
-    assert any("thumb" in item and "失败" in item for item in report.failed)
+    assert any("fanart" in item and "失败" in item for item in report.failed)
 
 
 async def test_existing_file_is_skipped_unless_overwrite(tmp_path):
@@ -231,7 +273,7 @@ async def test_run_can_force_overwrite_over_the_config(tmp_path):
     这种"修了一半"比明显没修更难发现。
     """
     http = _FakeHttp({"https://img.test/poster.jpg": b"new"})
-    ctx = _ctx(tmp_path, http, images=ImageDownloadConfig(overwrite=False, thumb=False))
+    ctx = _ctx(tmp_path, http, images=ImageDownloadConfig(overwrite=False))
     metadata_dir = tmp_path / "media" / "meta"
     metadata_dir.mkdir(parents=True)
     (metadata_dir / "MIDV-123-poster.jpg").write_bytes(b"old")
@@ -252,7 +294,7 @@ async def test_run_overwrite_false_also_wins_over_the_config(tmp_path):
     参数是"这一次跑的行为"，不是"或"。
     """
     http = _FakeHttp({"https://img.test/poster.jpg": b"new"})
-    ctx = _ctx(tmp_path, http, images=ImageDownloadConfig(overwrite=True, thumb=False))
+    ctx = _ctx(tmp_path, http, images=ImageDownloadConfig(overwrite=True))
     metadata_dir = tmp_path / "media" / "meta"
     metadata_dir.mkdir(parents=True)
     (metadata_dir / "MIDV-123-poster.jpg").write_bytes(b"old")
@@ -269,7 +311,7 @@ async def test_run_overwrite_false_also_wins_over_the_config(tmp_path):
 
 async def test_overwrite_replaces_existing(tmp_path):
     http = _FakeHttp({"https://img.test/poster.jpg": b"new"})
-    ctx = _ctx(tmp_path, http, images=ImageDownloadConfig(overwrite=True, thumb=False))
+    ctx = _ctx(tmp_path, http, images=ImageDownloadConfig(overwrite=True))
     metadata_dir = tmp_path / "media" / "meta"
     metadata_dir.mkdir(parents=True)
     (metadata_dir / "MIDV-123-poster.jpg").write_bytes(b"old")
@@ -327,7 +369,7 @@ async def test_fanart_skips_small_candidates_and_falls_back_to_cover(tmp_path):
     ctx = _ctx(
         tmp_path,
         http,
-        images=ImageDownloadConfig(poster=False, thumb=False, fanart=True, fanart_min_width=400),
+        images=ImageDownloadConfig(poster=False, fanart=True, fanart_min_width=400),
     )
     metadata_dir = tmp_path / "media" / "meta"
 
@@ -352,7 +394,7 @@ async def test_fanart_keeps_a_large_sample_when_available(tmp_path):
     ctx = _ctx(
         tmp_path,
         http,
-        images=ImageDownloadConfig(poster=False, thumb=False, fanart=True, fanart_min_width=400),
+        images=ImageDownloadConfig(poster=False, fanart=True, fanart_min_width=400),
     )
     metadata_dir = tmp_path / "media" / "meta"
 
@@ -371,7 +413,7 @@ async def test_zero_threshold_disables_the_guard(tmp_path):
         tmp_path,
         http,
         images=ImageDownloadConfig(
-            poster=False, thumb=False, fanart=True, fanart_min_width=0
+            poster=False, fanart=True, fanart_min_width=0
         ),
     )
     metadata_dir = tmp_path / "media" / "meta"
@@ -403,7 +445,7 @@ async def test_cover_fallback_ignores_the_width_guard(tmp_path):
     ctx = _ctx(
         tmp_path,
         http,
-        images=ImageDownloadConfig(poster=False, thumb=False, fanart=True, fanart_min_width=400),
+        images=ImageDownloadConfig(poster=False, fanart=True, fanart_min_width=400),
     )
     metadata_dir = tmp_path / "media" / "meta"
 
@@ -420,7 +462,7 @@ async def test_all_candidates_too_small_is_reported_as_skipped(tmp_path):
     ctx = _ctx(
         tmp_path,
         http,
-        images=ImageDownloadConfig(poster=False, thumb=False, fanart=True, fanart_min_width=400),
+        images=ImageDownloadConfig(poster=False, fanart=True, fanart_min_width=400),
     )
     report = await ImageDownloader(ctx).run(  # type: ignore[arg-type]
         metadata=_metadata(fanart_urls=["https://img.test/sample1.jpg"], poster_url=None),
