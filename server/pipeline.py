@@ -13,7 +13,9 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from server.aggregate import DEFAULT_ROUTES
 from server.classify import classify, is_video_file
+from server.cleaner import clean_query_name, episode_marker
 from server.matching import episode_conflicts, query_matches_metadata
 from server.models import (
     AggregatedMetadata,
@@ -44,6 +46,7 @@ async def scrape_one(
     query_override: str | None = None,
     source_pin: str | None = None,
     force_success: bool = False,
+    exclude_sources: set[str] | None = None,
 ) -> ScrapeRecord:
     """刮削单个文件并写记录。不落盘。
 
@@ -62,8 +65,6 @@ async def scrape_one(
     if query_override:
         query = query_override
     elif not match.number:
-        from server.cleaner import clean_query_name
-
         query = clean_query_name(path.name) or path.stem
 
     ctx_info = FetchContext(
@@ -71,6 +72,8 @@ async def scrape_one(
         content_type=match.content_type,
         query=query,
         path=str(path),
+        # 集/卷标记的原文 —— 源可以用它在候选里挑"同一卷"的那个
+        extra={"episode_marker": episode_marker(path.name)},
     )
 
     record = ScrapeRecord(
@@ -92,10 +95,17 @@ async def scrape_one(
         return record
 
     route_override = dict(ctx.config.route_override)
+    content_key = match.content_type.value
+    route = route_override.get(content_key) or DEFAULT_ROUTES.get(
+        match.content_type, DEFAULT_ROUTES[ContentType.UNKNOWN]
+    )
     if source_pin:
         # 只查这一个源：把该内容类型的路由整个换掉。
         # 字段优先级随后作用在这条单元素路由上，不会把别的源又拉回来。
-        route_override[match.content_type.value] = [source_pin]
+        route = [source_pin]
+    if exclude_sources:
+        route = [source_id for source_id in route if source_id not in exclude_sources]
+    route_override[content_key] = route
 
     aggregated: AggregatedMetadata = await ctx.aggregator.run(
         ctx_info,
@@ -146,6 +156,33 @@ async def scrape_one(
             not query_matches_metadata(query, aggregated.metadata) or conflict is not None
         ):
             record.error = f"人工确认后采用：查询「{query}」，抓回标题「{grabbed}」"
+
+    # 自动重试一次：把"拿下 title 的那个源"排除掉再聚合。
+    #
+    # 起因是实跑里反复出现的同一类错配：**一个源匹配错了，而它恰好排在路由最前面，
+    # 于是它的标题赢了合并、把整条记录带偏** —— 哪怕后面的源是对的。
+    # 实例：「黒ギャルアラカルト 1」在 bangumi 上搜到另一部作品，而 getchu 的同名条目
+    # 完全正确；「エロリーマン …」在 bangumi 上搜到《機械じかけのマリー》，getchu 也对。
+    # 不重试的话，这两条明明有正确数据，却只能停在"待人工确认"。
+    #
+    # 只在**已经判定失败**时才多跑一轮，正常路径一次都不受影响。
+    if (
+        record.status is ScrapeStatus.NEED_SELECTION
+        and not force_success
+        and not source_pin
+        and not exclude_sources
+    ):
+        culprit = record.field_sources.get("title")
+        if culprit:
+            retried = await scrape_one(
+                ctx,
+                path,
+                query_override=query_override,
+                exclude_sources={culprit},
+            )
+            if retried.status is ScrapeStatus.SUCCESS:
+                logger.info("自动重试成功：排除 %s 后匹配上了（%s）", culprit, path.name)
+                return retried
 
     await ctx.db.upsert_record(record)
     return record

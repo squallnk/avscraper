@@ -112,4 +112,21 @@ def clean_query_name(filename: str) -> str:
     return text.strip(" -_　·・")
 
 
-__all__ = ["clean_query_name"]
+def episode_marker(filename: str) -> str:
+    r"""文件名里那个"集/卷标记"的**原文**（如「第5話」「前編」「＃1」）。没有就返回空串。
+
+    清洗查询词时会把它连同后面的副标题一起剪掉（搜索时剪掉更容易命中），
+    但**挑候选时它有用**：getchu 搜「1LDK＋J系 …」会把整个系列的每一话都列出来，
+    而列表是按发售日排的，取第一条多半是别的卷。带上标记去挑就能命中同一卷。
+
+    返回原文而不是归一化后的：站点标题里写的是「第5話」，拿「第5话」去比就白比了。
+    归一化只用来**定位**，截取仍在原文上做（`normalize_markers` 是逐字符 1:1 映射）。
+    """
+    text = VIDEO_EXT.sub("", Path(filename).name)
+    matched = EPISODE_CUT.search(normalize_markers(text))
+    if matched is None:
+        return ""
+    return text[matched.start() : matched.end()].strip()
+
+
+__all__ = ["clean_query_name", "episode_marker"]

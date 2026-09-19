@@ -253,6 +253,26 @@ def test_search_prefers_the_entry_whose_title_contains_the_keyword():
     assert parse_search(html, "不存在的关键词")[0] == "1326924"
 
 
+def test_search_prefers_the_entry_matching_the_episode_marker():
+    r"""集/卷标记是唯一能区分"同一部作品的不同卷"的东西，优先度最高。
+
+    实测踩到：要「1LDK＋J系 … 第5話」，getchu 返回第8話；要「朝まで汁だく母娘丼!! 前編」，
+    返回後編。因为整个系列的每一话都在结果列表里，而列表按发售日排，第一条是别的卷。
+    """
+    html = _fixture("gc_euc_3.html")
+    # 不带标记：动画优先 -> 发售日更新的那条（後編）
+    assert parse_search(html, "朝まで汁だく母娘丼!!")[0] == "1326924"
+    # 带上标记就能挑对
+    assert parse_search(html, "朝まで汁だく母娘丼!!", "前編")[0] == "1326727"
+    assert parse_search(html, "朝まで汁だく母娘丼!!", "後編")[0] == "1326924"
+
+
+def test_search_without_marker_behaves_as_before():
+    """没有集数标记的文件（单话 OVA）不受影响。"""
+    html = _fixture("gc_euc_3.html")
+    assert parse_search(html, "朝まで汁だく母娘丼!!", "") == parse_search(html, "朝まで汁だく母娘丼!!")
+
+
 def test_search_with_only_one_anime_hit():
     """「彼女がセパレートをまとう理由」只有一条命中，就是动画本身。"""
     assert parse_search(_fixture("gc_euc_5.html")) == ["1341337"]

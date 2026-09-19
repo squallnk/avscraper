@@ -37,6 +37,9 @@ def register_fakes():
     register(_Fake("pick_b", "ドSなペット", plot="来自 pick_b"))
     # 多卷 OVA：查询词对得上，但卷号是另一卷
     register(_Fake("pick_vol2", "OVA おしかけ！爆乳ギャルハーレム性活 ＃2"))
+    # 一条"匹配错作品"的源 + 一条正确的源，用来验自动重试
+    register(_Fake("pick_wrong", "完全に別の作品"))
+    register(_Fake("pick_right", "ドSなペット", plot="来自 pick_right"))
     yield
 
 
@@ -104,6 +107,33 @@ async def test_other_volume_is_flagged_not_written():
     assert record.episode == 1
     assert record.status is ScrapeStatus.NEED_SELECTION
     assert "不是这一卷" in (record.error or "")
+
+
+async def test_wrong_source_is_retried_without_it():
+    r"""一个源匹配错了、而它又排在路由最前面时，自动把它排除后重试一次。
+
+    这是实跑里反复出现的一类：bangumi 搜到另一部作品、标题赢了合并，
+    把整条记录带偏 —— 哪怕后面的 getchu 完全正确。实例：
+
+        ``黒ギャルアラカルト 1``  -> bangumi 搜到《黒ギャルになったから親友とヤってみた。》
+        ``エロリーマン …``       -> bangumi 搜到《機械じかけのマリー》
+
+    不重试的话，这两条明明有正确数据，却只能停在"待人工确认"。
+    """
+    ctx = _ctx({"janime": ["pick_wrong", "pick_right"]}, ["pick_wrong", "pick_right"])
+    record = await scrape_one(ctx, JANIME_PATH, query_override=QUERY)
+
+    assert record.status is ScrapeStatus.SUCCESS
+    assert record.metadata is not None
+    assert record.metadata.plot == "来自 pick_right"
+
+
+async def test_retry_does_not_loop_forever():
+    """两个源都错时，只重试一次，最后还是"待人工确认"。"""
+    ctx = _ctx({"janime": ["pick_wrong", "pick_a"]}, ["pick_wrong", "pick_a"])
+    record = await scrape_one(ctx, JANIME_PATH, query_override=QUERY)
+
+    assert record.status is ScrapeStatus.NEED_SELECTION
 
 
 async def test_query_override_actually_changes_the_query():

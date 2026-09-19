@@ -168,38 +168,34 @@ def has_results(html: str) -> bool:
     return bool(soup.select("ul.display li"))
 
 
-def parse_search(html: str, keyword: str = "") -> list[str]:
-    r"""从搜索结果页取商品 id，按"该先试哪一个"排序：
+def parse_search(html: str, keyword: str = "", marker: str = "") -> list[str]:
+    r"""从搜索结果页取商品 id，按"该先试哪一个"排序。优先级从高到低：
 
-    1. 标题里含关键词 **且** 是动画
+    1. 标题里含**集/卷标记**（`第5話`、`前編`、`＃1` …）
     2. 标题里含关键词
     3. 是动画
-    4. 其余，按出现顺序
 
-    只在结果列表 `ul.display` 里取，不扫全页 —— 避免把推荐位/导航当成结果。
+    三种信号按元组比较，同级保持原顺序。只在结果列表 `ul.display` 里取，
+    不扫全页 —— 避免把推荐位/导航当成结果。
 
-    **为什么还要关键词优先**：getchu 的搜索是模糊的，会把沾边的也排进来。
-    实测搜「夏妻」时第一条动画是**另一部作品**「妻みぐい3 THE ANIMATION ゴールドディスク」——
-    跟"牝を狩る村 匹配到无关真人片"是同一类错配，只是发生在 getchu 上。
-    光按动画优先挡不住它。（`query_matches_metadata` 能兜底，但那是**事后**拦截，
-    会白白变成"待人工确认"，而不是直接找对。）
+    **为什么"标记"排第一**：getchu 搜「1LDK＋J系 …」会把整个系列的每一话都列出来，
+    而列表是**按发售日**排的 —— 取第一条多半是别的卷（实测：要第5話、抓回第8話；
+    要前編、抓回後編）。集数标记是唯一能区分"同一部作品的不同卷"的东西。
 
-    只在结果列表 `ul.display` 里取，不扫全页 —— 避免把推荐位/导航当成结果。
+    **为什么还要关键词优先**：getchu 的搜索是模糊的。实测搜「夏妻」时第一条动画是
+    **另一部作品**「妻みぐい3 THE ANIMATION ゴールドディスク」—— 跟"牝を狩る村
+    匹配到无关真人片"是同一类错配，只是发生在 getchu 上。
+    （`query_matches_metadata` 能兜底，但那是**事后**拦截，会白白变成"待确认"。）
 
-    **为什么动画必须优先**：同一个关键词下 getchu 混着不同形态的商品，
-    列表是**按发售日**排的，动画不一定排第一。实测两份真实响应：
-
-        朝まで汁だく母娘丼        -> 第一条是「MUJINコミックス」（漫画），
-                                   第二条才是「後編[智沢渚優]」（动画）
-        神聖昂燐ダクリュオン・ルナ   -> 第一条是 CHAOS-R 的亚克力立牌（周边）
-
-    取第一条就会把漫画/周边的元数据写到动画文件上，而且**查询词确实包含在标题里**
-    （"朝まで汁だく母娘丼!! MUJINコミックス"），匹配校验拦不住 —— 又一个静默错配。
-    所以按结果项里的 `<span class="orangeb">[アニメ・アダルト]</span>` 标签挑。
+    **为什么还要动画优先**：同一个关键词下混着漫画、周边、动画，而列表按发售日排。
+    实测「朝まで汁だく母娘丼」第一条是「MUJINコミックス」（漫画），
+    「神聖昂燐ダクリュオン・ルナ」第一条是亚克力立牌（周边）。取第一条就会把
+    漫画/周边的元数据写到动画文件上，而且**查询词确实包含在标题里**，校验拦不住。
     """
     soup = soup_of(html)
     needle = re.sub(r"\s+", "", keyword)
-    buckets: dict[int, list[str]] = {0: [], 1: [], 2: [], 3: []}
+    wanted = re.sub(r"\s+", "", marker)
+    ranked: list[tuple[tuple[int, int, int], str]] = []
     seen: set[str] = set()
     for item in soup.select("ul.display li"):
         anchor = item.select_one("a[href*='soft.phtml?id=']")
@@ -217,17 +213,17 @@ def parse_search(html: str, keyword: str = "") -> list[str]:
         # 用整个结果项的文本：第一个 a[href] 其实是包裹封面图的空链接，
         # 标题在后面的 a.blueb 里。整项取文本更省事，也不会漏。
         title_text = re.sub(r"\s+", "", item.get_text(" ", strip=True))
-        hit = bool(needle) and needle in title_text
         label = item.select_one("span.orangeb")
-        is_anime = label is not None and "アニメ" in label.get_text()
-        rank = 0 if (hit and is_anime) else 1 if hit else 2 if is_anime else 3
-        buckets[rank].append(product_id)
+        key = (
+            0 if (wanted and wanted in title_text) else 1,
+            0 if (needle and needle in title_text) else 1,
+            0 if (label is not None and "アニメ" in label.get_text()) else 1,
+        )
+        ranked.append((key, product_id))
 
-    ordered: list[str] = []
-    for rank in sorted(buckets):
-        ordered.extend(buckets[rank])
-    return ordered
-
+    # 同级保持原顺序（sort 是稳定的）
+    ranked.sort(key=lambda pair: pair[0])
+    return [product_id for _, product_id in ranked]
 
 def _has_image(soup: BeautifulSoup, url: str) -> bool:
     for img in soup.find_all("img"):
@@ -310,7 +306,7 @@ class GetchuSource(SourcePlugin):
         if not has_results(html):
             return None
 
-        ids = parse_search(html, keyword)
+        ids = parse_search(html, keyword, ctx.extra.get("episode_marker", ""))
         if not ids:
             return None
         return await self._by_id(client, ids[0])
