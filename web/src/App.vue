@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, h, ref } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
-import { NConfigProvider, NLayout, NLayoutSider, NMenu, NMessageProvider, darkTheme } from 'naive-ui'
+import {
+  NConfigProvider,
+  NDialogProvider,
+  NLayout,
+  NLayoutSider,
+  NMenu,
+  NMessageProvider,
+  darkTheme,
+} from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
 
 const route = useRoute()
@@ -21,8 +29,11 @@ const active = computed(() => String(route.path.replace('/', '') || 'dashboard')
 
 <template>
   <n-config-provider :theme="darkTheme">
-    <n-message-provider>
-      <n-layout has-sider style="height: 100vh">
+    <!-- useDialog() 拿不到 provider 时**直接抛异常**，而它在组件 setup 里调用 ——
+         少了这一层，整个「刮削记录」页会白屏，且 npm run build 不会报错。 -->
+    <n-dialog-provider>
+      <n-message-provider>
+        <n-layout has-sider style="height: 100vh">
         <n-layout-sider
           bordered
           collapse-mode="width"
@@ -39,8 +50,9 @@ const active = computed(() => String(route.path.replace('/', '') || 'dashboard')
         <n-layout content-style="padding: 20px; overflow: auto">
           <router-view />
         </n-layout>
-      </n-layout>
-    </n-message-provider>
+        </n-layout>
+      </n-message-provider>
+    </n-dialog-provider>
   </n-config-provider>
 </template>
 
