@@ -14,4 +14,5 @@ data/
 # 真实页面固件不入库：抓自成站点，含成人内容标题文本，放进公开仓库有风险。
 # 抓取方法见 docs/FIXTURES.md。本机需要跑全量用例时，把 .html 直接放进去即可。
 tests/fixtures/*.html
+tests/fixtures/*.json
 !tests/fixtures/.gitkeep

@@ -5,6 +5,7 @@
 | 源 | 访问墙 | 处理方式 |
 |---|---|---|
 | **getchu** | 年龄确认页 | **`gc=gc` 参数绕过，不需要 Cookie** |
+| **bangumi** | 无 | **公开 API，不需要 Cookie 也不需要代理** |
 | javbus / javdb / freejavbt | 可能有地域/反爬拦截 | 走 `proxy` 配置 |
 | ~~其它~~ | — | — |
 

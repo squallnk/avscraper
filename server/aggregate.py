@@ -32,8 +32,13 @@ DEFAULT_ROUTES: dict[ContentType, list[str]] = {
     ContentType.FC2: ["javdb", "freejavbt"],
     ContentType.CHINESE: ["javdb", "freejavbt"],
     ContentType.WESTERN: ["javdb", "freejavbt"],
-    # 里番没有番号，getchu 是第一源（商品是数字 id，靠路径关键词分类命中）
-    ContentType.JANIME: ["getchu", "javdb", "freejavbt"],
+    # 里番没有番号，查询靠作品名。顺序的考虑：
+    # - bangumi 放第一：搜索精度最高（实测 8/8 第一条即正确），且给中文名；
+    #   它只填 title/original_title/poster，标量字段填不满，后面几个源仍会被请求。
+    # - getchu 第二：里番商品页，补厂牌与发售日。
+    # - javdb 第三：补演员与剧照（前面几个源都没有这些）。
+    # - freejavbt 垫底。
+    ContentType.JANIME: ["bangumi", "getchu", "javdb", "freejavbt"],
     ContentType.UNKNOWN: ["javdb", "javbus", "freejavbt"],
 }
 

@@ -134,7 +134,7 @@ Authorization = "Bearer <webhook_token>"
   且只在结果列表 `ul.display` 里取 id。有命中/无命中各一份真实固件做回归。
 - 也可以用 `getchu:<商品id>` 直接指定。
 
-由于里番没有番号，里番的路由是 `getchu → javdb → freejavbt`，
+由于里番没有番号，里番的路由是 `bangumi → getchu → javdb → freejavbt`，
 分类靠**路径关键词**（目录名含"里番/アニメ/OVA"或文件名含"第N話"等）。
 
 ## 首次使用顺序

@@ -36,7 +36,8 @@
 - [x] **getchu 源**（里番第一源；EUC-JP；`gc=gc` 绕过年龄墙；搜索与商品页均已验证）
 - [x] 字段级多源聚合（内容类型路由 + 字段优先级 + 字段来源可查）
 - [x] **CloudDrive2 webhook**（虚拟路径映射、防抖、幂等、只扫子树）
-- [x] **四个源全部用真实页面固件验证**（getchu / javbus / javdb / freejavbt）
+- [x] **五个源全部用真实页面固件验证**（getchu / javbus / javdb / freejavbt / bangumi）
+- [x] **bangumi 源**（里番第一源；公开 API 免代理免 Cookie；**用旧版 `/search/subject` 而不是新版 `/v0/search/subjects`** —— 新版是语义模糊排序，同一部作品两种接口拿到的第一条实测不一样，旧版 8/8 全对）
 - [x] NFO 生成（movie / tvshow / episode）
 - [x] **图片下载**（海报/缩略图/背景图/剧照各自可关；剧照默认关闭并可限张数；候选 URL 逐个回退）
 - [x] **里番季集解析**（第N話/其の弍/前編/＃N/Vol.N/SxxEyy + 汉字数字 + 分集兜底）

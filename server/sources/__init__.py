@@ -44,9 +44,9 @@ def resolve(enabled: Iterable[str] | None) -> list[SourcePlugin]:
 
 
 def _load_builtin() -> None:
-    from server.sources import freejavbt, getchu, javbus, javdb  # noqa: F401
+    from server.sources import bangumi, freejavbt, getchu, javbus, javdb  # noqa: F401
 
-    for module in (getchu, javbus, javdb, freejavbt):
+    for module in (bangumi, getchu, javbus, javdb, freejavbt):
         plugin = module.PLUGIN
         if plugin.id not in _REGISTRY:
             register(plugin)
