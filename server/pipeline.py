@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from server.classify import classify, is_video_file
-from server.matching import query_matches_metadata
+from server.matching import episode_conflicts, query_matches_metadata
 from server.models import (
     AggregatedMetadata,
     ContentType,
@@ -116,6 +116,13 @@ async def scrape_one(
         ]
     )
 
+    grabbed = (aggregated.metadata.title or "")[:60]
+
+    # 分集兜底（CD1/CD2 那类）出来的集号本身就不牢靠 —— 它常常是同一集被切成
+    # 两半，作者拿 CD2 当第二集用。拿它去比标题里的卷号只会误判，所以不参与比对。
+    episode_for_check = None if match.episode_source == "分集兜底" else match.episode
+    conflict = episode_conflicts(episode_for_check, aggregated.metadata)
+
     if not has_any:
         record.status = ScrapeStatus.NOT_FOUND
         failures = [f"{r.source}: {r.failure_reason}" for r in aggregated.sources]
@@ -124,14 +131,20 @@ async def scrape_one(
         # 站点搜索是模糊的：库里没有这部作品时会返回"最像的"一条，
         # 通常是毫不相干的片子。这种结果不能当成功写进媒体库。
         record.status = ScrapeStatus.NEED_SELECTION
+        record.error = f"抓到的结果与查询不符，需要人工确认。查询「{query}」，抓回标题「{grabbed}」"
+    elif not force_success and conflict is not None:
+        # 查询词确实是标题的子串，但集/卷号对不上 —— 抓的是同一部作品的另一卷。
+        # 这种错配比"完全不相干"更隐蔽：标题看着像对的，封面和简介却是别人的。
+        record.status = ScrapeStatus.NEED_SELECTION
         record.error = (
-            f"抓到的结果与查询不符，需要人工确认。查询「{query}」，"
-            f"抓回标题「{(aggregated.metadata.title or '')[:60]}」"
+            f"抓到的结果不是这一卷，需要人工确认。文件是第 {match.episode} 集，"
+            f"抓回标题是第 {conflict} 集：「{grabbed}」"
         )
     else:
         record.status = ScrapeStatus.SUCCESS
-        if force_success and query and not query_matches_metadata(query, aggregated.metadata):
-            grabbed = (aggregated.metadata.title or "")[:60]
+        if force_success and query and (
+            not query_matches_metadata(query, aggregated.metadata) or conflict is not None
+        ):
             record.error = f"人工确认后采用：查询「{query}」，抓回标题「{grabbed}」"
 
     await ctx.db.upsert_record(record)

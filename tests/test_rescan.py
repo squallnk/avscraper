@@ -35,6 +35,8 @@ class _Fake(SourcePlugin):
 def register_fakes():
     register(_Fake("pick_a", "まったく別の作品"))
     register(_Fake("pick_b", "ドSなペット", plot="来自 pick_b"))
+    # 多卷 OVA：查询词对得上，但卷号是另一卷
+    register(_Fake("pick_vol2", "OVA おしかけ！爆乳ギャルハーレム性活 ＃2"))
     yield
 
 
@@ -86,6 +88,22 @@ async def test_source_pin_narrows_the_route_to_one_source():
     assert record.status is ScrapeStatus.SUCCESS
     assert record.metadata is not None
     assert record.metadata.plot == "来自 pick_b"
+
+
+async def test_other_volume_is_flagged_not_written():
+    """文件是 ＃1，抓回的是 ＃2 —— 查询词校验会放行，必须靠集号校验拦下。
+
+    这是实测踩过的形态：三例都判成了 success 并写进媒体库，
+    标题、封面、简介全是另一卷的。
+    """
+    vol1 = Path(
+        "/mnt/user/media/里番/[251128][ばにぃうぉ～か～]OVA おしかけ！爆乳ギャルハーレム性活 ＃1.chs.mp4"
+    )
+    ctx = _ctx({"janime": ["pick_vol2"]}, ["pick_vol2"])
+    record = await scrape_one(ctx, vol1)
+    assert record.episode == 1
+    assert record.status is ScrapeStatus.NEED_SELECTION
+    assert "不是这一卷" in (record.error or "")
 
 
 async def test_query_override_actually_changes_the_query():

@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from server.episode import parse_episode
 from server.models import MediaMetadata
 
 # 归一化时丢掉的分隔符／装饰字符
@@ -54,4 +55,36 @@ def query_matches_metadata(query: str, metadata: MediaMetadata) -> bool:
     return False
 
 
-__all__ = ["MIN_QUERY_LENGTH", "normalize_for_match", "query_matches_metadata"]
+def episode_conflicts(episode: int | None, metadata: MediaMetadata) -> int | None:
+    """标题里自带的集/卷号与文件解析出的集号是否冲突。
+
+    站点搜索是模糊的，同一部**多卷** OVA 会返回"某一卷"的页面，而查询词
+    （剪掉了卷号的作品名）确实是那个标题的子串 —— 所以包含判定拦不住。
+    实测的三例：
+
+        文件 ＃1     -> 抓回「OVA おしかけ！爆乳ギャルハーレム性活 ＃2」
+        文件 Vol.1   -> 抓回「ながちち永井さん THE ANIMATION Vol.2 ドキドキ…」
+        文件 第二話  -> 抓回「危険な森 おにごっこ 第一話 「待っててね。お姉ちゃん」」
+
+    三例都判成了 success 并写进媒体库：标题、封面、简介全是另一卷的。
+
+    返回冲突的那个集号；标题里没有集号标记、或与文件一致时返回 `None`。
+    判断不出来就放行 —— 这里只拦"明确矛盾"，不猜。
+    """
+    if episode is None:
+        return None
+    title = metadata.title or ""
+    if not title:
+        return None
+    title_episode = parse_episode(title).episode
+    if title_episode is None or title_episode == episode:
+        return None
+    return title_episode
+
+
+__all__ = [
+    "MIN_QUERY_LENGTH",
+    "episode_conflicts",
+    "normalize_for_match",
+    "query_matches_metadata",
+]

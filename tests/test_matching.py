@@ -9,7 +9,7 @@ javdb 的模糊搜索返回了一部 2012 年的真人片，标题、演员、�
 
 import pytest
 
-from server.matching import normalize_for_match, query_matches_metadata
+from server.matching import episode_conflicts, normalize_for_match, query_matches_metadata
 from server.models import MediaMetadata
 
 
@@ -55,6 +55,40 @@ def test_normalization_ignores_separators_and_width():
         "ドSなペット～初めての躾け～"
     )
     assert query_matches_metadata("1LDK＋J系", MediaMetadata(title="1LDK+J系 いきなり同居")) is True
+
+
+@pytest.mark.parametrize(
+    ("file_episode", "grabbed_title", "expected"),
+    [
+        # 实测的三例：都是 success 写进库的，标题、封面、简介是另一卷的
+        (1, "OVA おしかけ！爆乳ギャルハーレム性活 ＃2", 2),
+        (1, "ながちち永井さん THE ANIMATION Vol.2 ドキドキチ", 2),
+        (2, "危険な森 おにごっこ 第一話 「待っててね。お姉ちゃん」", 1),
+        # 一致 —— 不能误报
+        (6, "1LDK＋J系 いきなり同居？密着！？初エッチ！！？ 第6話", None),
+        (1, "牝を狩る村 前編", None),
+        (2, "好色の忠義くノ一ぼたん 其の弍", None),
+        # 标题里根本没有集号标记 —— 判断不出来就放行，不猜
+        (1, "狩猎雌性的村庄", None),
+        (1, "おしかけ！爆乳ギャルハーレム性活", None),
+        # 文件没解析出集号时不做比对
+        (None, "OVA おしかけ！爆乳ギャルハーレム性活 ＃2", None),
+    ],
+)
+def test_episode_conflicts(file_episode, grabbed_title, expected):
+    """集/卷号必须与文件一致。
+
+    这类错配**能通过查询词的包含判定**（查询词确实是标题的子串），
+    所以只靠 `query_matches_metadata` 拦不住。
+    """
+    assert episode_conflicts(file_episode, MediaMetadata(title=grabbed_title)) == expected
+
+
+def test_episode_conflict_survives_the_query_check():
+    """回归：这三例当年都通过了查询词校验，必须由集号校验兜住。"""
+    metadata = MediaMetadata(title="OVA おしかけ！爆乳ギャルハーレム性活 ＃2")
+    assert query_matches_metadata("おしかけ！爆乳ギャルハーレム性活", metadata) is True
+    assert episode_conflicts(1, metadata) == 2
 
 
 def test_need_selection_status_exists():

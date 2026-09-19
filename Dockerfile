@@ -16,6 +16,17 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+
+# 构建标记必须放在依赖层**之后**：ARG/ENV 一变就会让它后面的层全部失效，
+# 放前面等于每次提交都重装一遍依赖。
+# 之前 workflow 传了 BUILD_SHA / BUILD_TIME 但这里没有 ARG 接住，
+# 参数被静默丢掉，/api/health 一直显示 build_sha=dev ——
+# 恰恰是排查"容器里跑的是哪个版本"时最需要它。
+ARG BUILD_SHA=dev
+ARG BUILD_TIME=
+ENV AVS_BUILD_SHA=${BUILD_SHA} \
+    AVS_BUILD_TIME=${BUILD_TIME}
+
 COPY server/ ./server/
 COPY --from=web /app/web/dist ./web/dist
 RUN mkdir -p /app/data
