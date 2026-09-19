@@ -337,6 +337,9 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
 
     task.total = len(files)
     task.message = f"待刮削 {len(files)} 个文件"
+    # 每个文件的结论都记一条：WebUI 的「日志」页是排查的主要入口，
+    # 只记"开始/结束"的话，跑完一批不知道哪一条被跳过、哪一条待确认。
+    logger.info("开始扫描：%d 个文件，根目录 %s", len(files), [str(r) for r in roots])
     succeeded = 0
     failed = 0
     skipped = 0
@@ -358,6 +361,11 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
 
         if record.status is ScrapeStatus.SUCCESS:
             succeeded += 1
+            logger.info(
+                "成功 %s → %s",
+                path.name,
+                (record.metadata.title if record.metadata else None) or record.number or "（无标题）",
+            )
             if record.metadata and task.payload.get("write_metadata"):
                 # 默认写在视频旁边 —— `.metadata/` 子目录 Emby 不认，等于白写
                 await write_record_metadata(
@@ -376,12 +384,16 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
                 )
         elif record.status is ScrapeStatus.NEED_SELECTION:
             pending += 1
+            logger.info("待确认 %s：%s", path.name, record.error or "多个候选")
         elif record.status is ScrapeStatus.NOT_FOUND:
             missing += 1
+            logger.info("未命中 %s：%s", path.name, record.error or "所有源都没有这条")
         elif record.status is ScrapeStatus.SKIPPED:
             skipped += 1
+            logger.debug("跳过 %s", path.name)
         else:
             failed += 1
+            logger.warning("失败 %s：%s", path.name, record.error or "未知原因")
 
     task.result.update(
         {
@@ -397,6 +409,7 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
         f"完成：成功 {succeeded}，待确认 {pending}，未命中 {missing}，"
         f"失败 {failed}，跳过 {skipped}{suffix}"
     )
+    logger.info("扫描结束：%s", task.message)
 
 
 def make_organizer(ctx: AppContext) -> Organizer:

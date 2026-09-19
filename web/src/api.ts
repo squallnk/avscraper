@@ -2,12 +2,26 @@
 
 export interface HealthInfo {
   status: string
+  version: string
+  build_sha: string
+  build_time: string
+  data_dir: string
   allowed_roots: string[]
   writes_enabled: boolean
   dry_run: boolean
   organize_enabled: boolean
   queue_depth: number
   sources: number
+}
+
+/** 检查更新：当前版本 vs GHCR 上 latest 镜像的 revision 标签。 */
+export interface VersionCheck {
+  version: string
+  build_sha: string
+  build_time: string
+  latest_sha: string | null
+  up_to_date: boolean | null
+  error: string | null
 }
 
 export interface RuntimeConfig {
@@ -170,6 +184,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => call<HealthInfo>('/api/health'),
+  versionCheck: () => call<VersionCheck>('/api/version/check'),
   config: () => call<RuntimeConfig>('/api/config'),
   patchConfig: (patch: Partial<RuntimeConfig>) =>
     call<RuntimeConfig>('/api/config', { method: 'PUT', body: JSON.stringify(patch) }),
@@ -200,7 +215,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  logs: () => call<{ level: string; logger: string; message: string; created_at: string }[]>('/api/logs'),
+  logs: (params?: { level?: string; limit?: number }) => {
+    const query = new URLSearchParams()
+    if (params?.level) query.set('level', params.level)
+    if (params?.limit) query.set('limit', String(params.limit))
+    const suffix = query.toString()
+    return call<{ level: string; logger: string; message: string; created_at: string }[]>(
+      suffix ? '/api/logs?' + suffix : '/api/logs',
+    )
+  },
   classify: (path: string) =>
     call<ClassifyInfo>('/api/classify', { method: 'POST', body: JSON.stringify({ path }) }),
   render: (template: string, data: Record<string, string>) =>

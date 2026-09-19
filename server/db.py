@@ -447,6 +447,14 @@ class Database:
         )
         await self.conn.commit()
 
+    async def prune_logs(self, keep: int) -> int:
+        """只留最近 keep 行。日志表没有别的清理途径，不管就会一直长。"""
+        cur = await self.conn.execute(
+            "DELETE FROM app_logs WHERE id <= (SELECT MAX(id) FROM app_logs) - ?", (keep,)
+        )
+        await self.conn.commit()
+        return cur.rowcount or 0
+
     async def list_logs(self, limit: int = 300, level: str | None = None) -> list[dict[str, Any]]:
         sql = "SELECT level, logger, message, created_at FROM app_logs"
         params: list[Any] = []

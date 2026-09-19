@@ -17,6 +17,9 @@ from typing import Any
 from server.aggregate import Aggregator
 from server.config import RuntimeConfig, Settings
 from server.db import Database
+from server.logs import flush_loop as flush_log_loop
+from server.logs import flush_once as flush_logs_once
+from server.logs import install as install_log_handler
 from server.models import ScrapeStatus
 from server.ratelimit import Breaker, RateLimiter, SerialQueue
 from server.sources.http import HttpClient
@@ -43,6 +46,7 @@ class AppContext:
     scan_roots: list[Path] = field(default_factory=list)
     webhook: Any = None
     _flush_task: Any = None
+    _log_task: Any = None
 
     async def reload_config(self) -> RuntimeConfig:
         """从 DB 重读运行期配置，并把变化推给各组件。"""
@@ -73,6 +77,10 @@ class AppContext:
 async def build_context(settings: Settings) -> AppContext:
     db = Database(settings.database_path)
     await db.connect()
+
+    # 日志落库：handler 只往内存队列塞一行（emit 是同步的，不能在里面 await 数据库），
+    # 真正写库的是下面启动的后台任务。见 server/logs.py。
+    install_log_handler()
 
     config = await db.get_config()
 
@@ -116,6 +124,7 @@ async def build_context(settings: Settings) -> AppContext:
         breaker=breaker,
     )
     ctx.webhook = WebhookProcessor(ctx)
+    ctx._log_task = asyncio.create_task(flush_log_loop(db), name="avs-log-flush")
     await start_webhook_loop(ctx)
 
     logger.info(
@@ -147,6 +156,13 @@ async def start_webhook_loop(ctx: AppContext) -> None:
 
 
 async def shutdown_context(ctx: AppContext) -> None:
+    if ctx._log_task is not None:
+        ctx._log_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await ctx._log_task
+    # 收尾：最后几行（含上面的停止过程）也要落库
+    with contextlib.suppress(Exception):
+        await flush_logs_once(ctx.db)
     if ctx._flush_task is not None:
         ctx._flush_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

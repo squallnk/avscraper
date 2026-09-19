@@ -34,6 +34,15 @@ const HEALTH = {
   sources: 5,
 }
 
+const VERSION = {
+  version: '0.1.0',
+  build_sha: 'test',
+  build_time: '2026-09-19T18:20:00Z',
+  latest_sha: 'test',
+  up_to_date: true,
+  error: null,
+}
+
 const CONFIG = {
   dry_run: true,
   organize_enabled: false,
@@ -102,6 +111,7 @@ beforeEach(() => {
       const url = String(input)
       if (url.startsWith('/api/records')) return reply(records)
       if (url.startsWith('/api/health')) return reply(HEALTH)
+      if (url.startsWith('/api/version/check')) return reply(VERSION)
       if (url.startsWith('/api/config')) return reply(CONFIG)
       return reply([])
     }),
@@ -151,6 +161,32 @@ describe('刮削记录页', () => {
     expect(text).toContain('重刮')
     expect(text).toContain('删除记录')
     expect(text).toContain('抖S的宠物')
+    wrapper.unmount()
+  })
+})
+
+describe('版本号', () => {
+  // 用户反复踩的坑：分不清容器里跑的是不是最新版，只能靠行为反推。
+  // 所以侧边栏直接显示版本 + 构建号，并且能一键问后端。
+  it('侧边栏显示版本号和构建号', async () => {
+    const wrapper = await open('/dashboard')
+    const text = wrapper.text()
+    expect(text).toContain('v0.1.0')
+    expect(text).toContain('test')
+    wrapper.unmount()
+  })
+
+  it('点「检查更新」会去问后端', async () => {
+    const wrapper = await open('/dashboard')
+    const button = wrapper.findAll('button').find((item) => item.text().includes('检查更新'))
+    expect(button).toBeTruthy()
+
+    await button!.trigger('click')
+    await flushPromises()
+
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls
+    const urls = calls.map((call) => String(call[0]))
+    expect(urls).toContain('/api/version/check')
     wrapper.unmount()
   })
 })

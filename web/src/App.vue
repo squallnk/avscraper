@@ -11,6 +11,7 @@ import {
   darkTheme,
 } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
+import VersionBadge from '@/components/VersionBadge.vue'
 
 const route = useRoute()
 const collapsed = ref(false)
@@ -46,6 +47,9 @@ const active = computed(() => String(route.path.replace('/', '') || 'dashboard')
         >
           <div style="padding: 16px 20px; font-weight: 600; letter-spacing: 1px">avscraper</div>
           <n-menu :value="active" :options="menu" :collapsed="collapsed" />
+          <!-- 版本号钉在侧边栏底部：判断"容器里跑的是不是最新版"全靠它，
+               以前只能去翻 /api/health，或者靠行为反推。 -->
+          <version-badge :collapsed="collapsed" />
         </n-layout-sider>
         <n-layout content-style="padding: 20px; overflow: auto">
           <router-view />

@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
@@ -52,6 +53,111 @@ async def health(request: Request) -> dict[str, Any]:
         "organize_enabled": ctx.config.organize_enabled,
         "queue_depth": ctx.runner.depth,
         "sources": len(all_sources()),
+    }
+
+
+# 镜像发布在 GHCR 的哪个仓库下。检查更新问的就是它。
+RELEASE_REPO = "squallnk/avscraper"
+
+# 检查更新是"顺手一问"，不能把界面卡住 —— 超时给短一点。
+UPDATE_TIMEOUT = 8.0
+
+
+def _probe_client(proxy: str) -> httpx.AsyncClient:
+    """问外网用的临时客户端。
+
+    跟**源抓取用的那个 HttpClient** 分开：那个带熔断器，
+    检查更新失败不该影响正在跑的刮削。代理沿用配置里的，出口路径保持一致。
+    """
+    kwargs: dict[str, Any] = {
+        "timeout": httpx.Timeout(UPDATE_TIMEOUT),
+        "follow_redirects": True,
+        "headers": {"User-Agent": "avscraper", "Accept-Language": "zh-CN,zh;q=0.9"},
+    }
+    if proxy:
+        kwargs["proxy"] = proxy
+    return httpx.AsyncClient(**kwargs)
+
+
+async def _latest_published_sha(proxy: str) -> str:
+    r"""GHCR 上 latest 镜像的 revision 标签 —— "已发布的最新版"就是它。
+
+    为什么不去问 GitHub 上 main 的最新提交：提交推上去之后还要跑构建，
+    **构建期间 main 已经更新、镜像还是旧的**。那会告诉用户"有新版本"，
+    可他拉下来还是老的，反而更迷惑。镜像上的标签才是他真正能拉到的东西。
+
+    匿名可达（公开镜像），三步：换 token -> 取 index -> 读 config 的标签。
+    """
+    async with _probe_client(proxy) as client:
+        token_response = await client.get(
+            "https://ghcr.io/token",
+            params={"scope": "repository:" + RELEASE_REPO + ":pull", "service": "ghcr.io"},
+        )
+        token_response.raise_for_status()
+        token = str(token_response.json()["token"])
+        accept = (
+            "application/vnd.oci.image.index.v1+json,"
+            "application/vnd.docker.distribution.manifest.list.v2+json,"
+            "application/vnd.oci.image.manifest.v1+json"
+        )
+        headers = {"Authorization": "Bearer " + token, "Accept": accept}
+        base = "https://ghcr.io/v2/" + RELEASE_REPO
+        index = (await client.get(base + "/manifests/latest", headers=headers)).json()
+        manifest = index
+        if index.get("manifests"):
+            # 多架构镜像：取 amd64 那份。取不到就退第一条，标签是一样的。
+            pick = next(
+                (
+                    entry
+                    for entry in index["manifests"]
+                    if (entry.get("platform") or {}).get("architecture") == "amd64"
+                ),
+                index["manifests"][0],
+            )
+            manifest = (
+                await client.get(base + "/manifests/" + pick["digest"], headers=headers)
+            ).json()
+        config = (
+            await client.get(
+                base + "/blobs/" + manifest["config"]["digest"],
+                headers={**headers, "Accept": "application/json"},
+            )
+        ).json()
+        revision = (config.get("config", {}).get("Labels") or {}).get(
+            "org.opencontainers.image.revision"
+        )
+        if not revision:
+            raise RuntimeError("镜像上没有 revision 标签")
+        return str(revision)
+
+
+@router.get("/version/check")
+async def check_version(request: Request) -> dict[str, Any]:
+    r"""回答"我拉的是不是最新版"。WebUI 侧边栏的版本号点它就是这里。
+
+    up_to_date 为 null 表示"问不到"—— 容器出不了网、或者本地源码运行。
+    这种情况如实报错，不要猜一个"已是最新"给用户。
+    """
+    ctx = get_ctx(request)
+    info = build_info()
+    current = info["build_sha"]
+    if current == "dev":
+        return {
+            **info,
+            "latest_sha": None,
+            "up_to_date": None,
+            "error": "本地源码运行，没有可比的镜像版本",
+        }
+    try:
+        latest = await _latest_published_sha(ctx.config.proxy)
+    except Exception as exc:  # noqa: BLE001 - 问不到不是服务错误，界面上说明就行
+        logger.warning("检查更新失败: %s", exc)
+        return {**info, "latest_sha": None, "up_to_date": None, "error": f"查不到最新版：{exc}"}
+    return {
+        **info,
+        "latest_sha": latest,
+        "up_to_date": latest.startswith(current) or current.startswith(latest[: len(current)]),
+        "error": None,
     }
 
 
