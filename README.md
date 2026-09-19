@@ -120,8 +120,17 @@ pip install -r requirements.txt pytest pytest-asyncio ruff
 python -m server.cli selftest
 python -m server.main           # http://127.0.0.1:9300
 
-cd web && npm install && npm run dev    # 前端开发服务器，代理 /api 到 9300
+cd web && npm install
+npm run test                            # 每个页面真挂载一遍 —— 挡住"白屏"这类问题
+npm run dev                             # 前端开发服务器，代理 /api 到 9300
 ```
+
+**为什么前端要有测试**：给「刮削记录」加删除确认时用了 `useDialog()`，
+而 App.vue 里只有 `n-message-provider`。naive-ui 注入不到 provider 时**直接抛异常**，
+异常又发生在组件 setup 阶段 —— 整页空白。而 `npm run build` 完全正常。
+所以现在每个页面都会被真挂载一次，断言渲染出了页面自己的内容。
+（另有一条不依赖 node 的静态检查：`tests/test_web_providers.py` 扫遍所有 `.vue`，
+要求用到的 provider hook 都有对应 provider 且挂在 router-view 外层。）
 
 前端构建产物存在时后端会直接托管，所以生产只出一个端口。
 

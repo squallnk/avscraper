@@ -41,8 +41,16 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: 安装并构建前端
+      - name: 安装前端依赖
         working-directory: web
-        run: |
-          npm ci --no-audit --no-fund
-          npm run build
+        run: npm ci --no-audit --no-fund
+
+      # 每个页面真挂载一遍。provider 缺失、setup 里抛异常这类问题
+      # npm run build 抓不到 —— 它只做类型检查与打包，provider 是运行时注入。
+      - name: 前端测试
+        working-directory: web
+        run: npm run test
+
+      - name: 构建前端
+        working-directory: web
+        run: npm run build
