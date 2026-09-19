@@ -41,6 +41,28 @@ async def test_cache_key_carries_the_parser_version():
     assert all(k.startswith(f"v{SOURCE_CACHE_VERSION}:") for k in seen), seen
 
 
+def test_cache_key_includes_the_episode_marker():
+    r"""集/卷标记要进缓存键。
+
+    它会决定源挑哪一条候选 —— getchu 靠它区分「第5話」和「第8話」。
+    不进 key 的话：同一个系列的不同话会共用一份缓存互相串，
+    而且改了挑选逻辑之后旧快照照样命中（"改了跟没改一样"，已经栽过一次）。
+    """
+    from server.sources.getchu import PLUGIN
+
+    base = FetchContext(query="1LDK＋J系", content_type=ContentType.JANIME)
+    ep5 = FetchContext(
+        query="1LDK＋J系", content_type=ContentType.JANIME, extra={"episode_marker": "第5話"}
+    )
+    ep8 = FetchContext(
+        query="1LDK＋J系", content_type=ContentType.JANIME, extra={"episode_marker": "第8話"}
+    )
+
+    assert PLUGIN.cache_key(base) == "1LDK＋J系"
+    assert PLUGIN.cache_key(ep5) == "1LDK＋J系|第5話"
+    assert PLUGIN.cache_key(ep5) != PLUGIN.cache_key(ep8)
+
+
 async def test_clear_snapshots_by_source_and_all(tmp_path):
     db = Database(tmp_path / "cache.db")
     await db.connect()

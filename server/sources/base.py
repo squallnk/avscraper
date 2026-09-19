@@ -77,7 +77,17 @@ class SourcePlugin(ABC):
         return self.descriptor.id
 
     def cache_key(self, ctx: FetchContext) -> str:
-        return ctx.number or ctx.query or ""
+        r"""缓存键 —— **凡是影响结果的输入都要进来**。
+
+        集/卷标记会决定源挑哪一条候选（getchu 靠它区分第5話和第8話），
+        所以必须进 key：不进的话
+          1. 同一个系列的不同话会共用一份缓存，互相串；
+          2. 改了挑选逻辑之后旧快照还会命中 —— 表现成"改了跟没改一样"。
+        第 2 条已经栽过一次（`SOURCE_CACHE_VERSION` 就是为它加的）。
+        """
+        base = ctx.number or ctx.query or ""
+        marker = ctx.extra.get("episode_marker", "").strip()
+        return f"{base}|{marker}" if marker else base
 
     @abstractmethod
     async def fetch(self, client: object, ctx: FetchContext) -> MediaMetadata | None:
