@@ -37,6 +37,20 @@ class SourceNotFound(SourceError):
         super().__init__(message, reason="not_found")
 
 
+SOURCE_CACHE_VERSION = 2
+r"""源的**解析逻辑**版本。改了任何源的解析就把它 +1。
+
+快照缓存是按 `(源, 查询词)` 存的原始解析结果（见 `db.save_snapshot`）。
+没有这个版本号时，解析改了以后旧快照还会被继续命中 —— 表现是
+**"代码明明改了，重跑一遍却一点变化都没有"**，而且看不出是缓存干的。
+
+真踩过：getchu 加上 サンプル画像 解析之后重跑，剧照还是空的 ——
+因为缓存里存的还是"没有剧照"那一版。查了半天选择器。
+
+v2：getchu 采集 サンプル画像。
+"""
+
+
 @dataclass
 class FetchContext:
     """一次刮削请求的上下文。"""

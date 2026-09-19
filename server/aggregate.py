@@ -22,7 +22,7 @@ from server.models import (
 from server.sources import FetchContext
 from server.sources import get as get_source
 from server.sources import resolve as resolve_sources
-from server.sources.base import SourceError
+from server.sources.base import SOURCE_CACHE_VERSION, SourceError
 
 # 未命中任何路由的字段按此顺序取值
 DEFAULT_ROUTES: dict[ContentType, list[str]] = {
@@ -149,7 +149,8 @@ class Aggregator:
             if plugin is None:
                 continue
 
-            cache_key = plugin.cache_key(ctx)
+            # 版本号进 key：解析逻辑改了以后旧快照自动失效，不会"改了跟没改一样"
+            cache_key = f"v{SOURCE_CACHE_VERSION}:{plugin.cache_key(ctx)}"
             started = time.monotonic()
             cached = False
             metadata: MediaMetadata | None = None

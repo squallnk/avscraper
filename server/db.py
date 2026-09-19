@@ -423,6 +423,21 @@ class Database:
 
     # ---------------- 日志 ----------------
 
+    async def clear_snapshots(self, source: str | None = None) -> int:
+        """清源快照缓存。`source` 为空表示全清，返回清掉的条数。
+
+        缓存按 `(源, 查询词)` 存解析结果，正常不用手动清 —— 改了源解析
+        记得把 `SOURCE_CACHE_VERSION` +1。但这个口子留着有用：
+        站点把某条目的页面内容改了（比如换了封面），代码没动，
+        这时候只有清缓存才能让新内容进来。
+        """
+        if source:
+            cur = await self.conn.execute("DELETE FROM source_snapshots WHERE source = ?", (source,))
+        else:
+            cur = await self.conn.execute("DELETE FROM source_snapshots")
+        await self.conn.commit()
+        return cur.rowcount or 0
+
     async def add_logs(self, entries: Iterable[tuple[str, str, str]]) -> None:
         rows = [(lvl, name, msg, _now()) for lvl, name, msg in entries]
         if not rows:

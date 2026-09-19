@@ -327,6 +327,31 @@ async def sources_health(request: Request) -> dict[str, Any]:
     return get_ctx(request).http.status()
 
 
+class ClearCacheRequest(BaseModel):
+    """清源快照缓存。`source` 留空表示全清。"""
+
+    source: str | None = None
+    confirm: bool = False
+
+
+@router.post("/sources/cache/clear")
+async def clear_source_cache(payload: ClearCacheRequest, request: Request) -> dict[str, Any]:
+    """清掉源快照缓存。
+
+    正常不用手动清 —— 改了源解析记得把 `SOURCE_CACHE_VERSION` +1，旧快照会自动失效。
+    这个口子留给另一种情况：**站点把页面的内容改了而代码没动**
+    （换了封面、补了剧照），不清缓存就永远拿旧的。
+    """
+    ctx = get_ctx(request)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="需要 confirm=true 才会清缓存")
+    if payload.source and source_by_id(payload.source) is None:
+        raise HTTPException(status_code=404, detail="未知数据源")
+    deleted = await ctx.db.clear_snapshots(payload.source)
+    logger.info("清源快照缓存 %d 条（source=%s）", deleted, payload.source or "全部")
+    return {"deleted": deleted}
+
+
 # ---------------------------------------------------------------- 任务
 
 
