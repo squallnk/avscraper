@@ -37,7 +37,7 @@ class SourceNotFound(SourceError):
         super().__init__(message, reason="not_found")
 
 
-SOURCE_CACHE_VERSION = 3
+SOURCE_CACHE_VERSION = 4
 r"""源的**解析逻辑**版本。改了任何源的解析就把它 +1。
 
 快照缓存是按 `(源, 查询词)` 存的原始解析结果（见 `db.save_snapshot`）。
@@ -50,6 +50,8 @@ r"""源的**解析逻辑**版本。改了任何源的解析就把它 +1。
 v2：getchu 采集 サンプル画像。
 v3：getchu 搜索关键词改用 EUC-JP 编码 —— 这会让同一个查询词命中**另一批**结果，
     旧快照必须作废，否则看不出修复效果。
+v4：getchu 同分候选里挑第一个有サンプル画像的（限定版合集页拿不到剧照）。
+    同一个查询词现在会落到**另一个商品页**，旧快照必须作废。
 """
 
 

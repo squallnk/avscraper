@@ -35,6 +35,9 @@ ENCODING = "euc-jp"
 # 「すすむ」按钮背后的机制就是带上这个参数
 AGE_ACK_PARAM = "gc=gc"
 
+# 同分候选最多试几个。每个都要抓一次详情页，不能无限试。
+_SAMPLE_PROBE_LIMIT = 3
+
 _ID_QUERY = re.compile(r"^getchu:(\d{3,8})$", re.IGNORECASE)
 _DATE = re.compile(r"(\d{4})[/\-年](\d{1,2})[/\-月](\d{1,2})")
 
@@ -168,8 +171,10 @@ def has_results(html: str) -> bool:
     return bool(soup.select("ul.display li"))
 
 
-def parse_search(html: str, keyword: str = "", marker: str = "") -> list[str]:
-    r"""从搜索结果页取商品 id，按"该先试哪一个"排序。优先级从高到低：
+def rank_search(
+    html: str, keyword: str = "", marker: str = ""
+) -> list[tuple[tuple[int, int, int], str]]:
+    r"""给搜索结果排序，返回 (排序键, 商品 id)。优先级从高到低：
 
     1. 标题里含**集/卷标记**（`第5話`、`前編`、`＃1` …）
     2. 标题里含关键词
@@ -191,6 +196,10 @@ def parse_search(html: str, keyword: str = "", marker: str = "") -> list[str]:
     实测「朝まで汁だく母娘丼」第一条是「MUJINコミックス」（漫画），
     「神聖昂燐ダクリュオン・ルナ」第一条是亚克力立牌（周边）。取第一条就会把
     漫画/周边的元数据写到动画文件上，而且**查询词确实包含在标题里**，校验拦不住。
+
+    **为什么把排序键交出去**：键相同意味着"该先试谁"分不出高下，光看标题挑不出来 ——
+    但把候选页抓下来看有没有サンプル画像就能挑（见 _pick）。
+    键不同则是**有依据**的先后（集数标记、是不是动画），不能为了图片越过它。
     """
     soup = soup_of(html)
     needle = re.sub(r"\s+", "", keyword)
@@ -223,7 +232,12 @@ def parse_search(html: str, keyword: str = "", marker: str = "") -> list[str]:
 
     # 同级保持原顺序（sort 是稳定的）
     ranked.sort(key=lambda pair: pair[0])
-    return [product_id for _, product_id in ranked]
+    return ranked
+
+
+def parse_search(html: str, keyword: str = "", marker: str = "") -> list[str]:
+    """排序后的商品 id 列表 —— 只关心"先试谁"的调用方用这个。"""
+    return [product_id for _, product_id in rank_search(html, keyword, marker)]
 
 def _has_image(soup: BeautifulSoup, url: str) -> bool:
     for img in soup.find_all("img"):
@@ -306,10 +320,37 @@ class GetchuSource(SourcePlugin):
         if not has_results(html):
             return None
 
-        ids = parse_search(html, keyword, ctx.extra.get("episode_marker", ""))
-        if not ids:
+        ranked = rank_search(html, keyword, ctx.extra.get("episode_marker", ""))
+        if not ranked:
             return None
-        return await self._by_id(client, ids[0])
+        top = ranked[0][0]
+        return await self._pick(
+            client, [product_id for key, product_id in ranked if key == top]
+        )
+
+    async def _pick(self, client: object, ids: list[str]) -> MediaMetadata | None:
+        r"""在同分候选里挑第一个**真有サンプル画像**的。
+
+        为什么不能只取第一条：getchu 上有「限定版 / 同梱版」这种**合集页**，
+        它的标题把单品的标题整个包在里面，于是关键词、动画标记统统命中、还排在前面 ——
+        而合集页**没有サンプル画像**。实跑就吃了这个：搜「トナリノカノジョ」，
+        第一条是「OVA トナリノカノジョ＆OVA ヨゴレタカノジョ【Getchu.com限定版】」（0 张图），
+        真正的单品「OVA トナリノカノジョ」（20 张图）排在第二条 ——
+        两个文件因此都没有横版剧照，只能拿封面当背景图。
+
+        只试**同分**的候选。分数不同说明"该先试谁"有依据（集数标记、是不是动画），
+        为了插图越过它，就会把**别的卷**的剧照配到本文件上 —— 比没有图更糟。
+        """
+        best: MediaMetadata | None = None
+        for product_id in ids[:_SAMPLE_PROBE_LIMIT]:
+            metadata = await self._by_id(client, product_id)
+            if metadata is None:
+                continue
+            if metadata.fanart_urls:
+                return metadata
+            if best is None:
+                best = metadata
+        return best
 
     async def _by_id(self, client: object, product_id: str) -> MediaMetadata | None:
         r"""按商品 id 取详情页，**先试新地址** `/item/<id>/?gc=gc`。

@@ -8,18 +8,22 @@
 这样站点小改版能被测出来。合成页面只能挡住"改坏代码"。
 """
 
+import httpx
 import pytest
 from conftest import load_fixture
 
-from server.sources.base import SourceError
+from server.sources.base import ContentType, FetchContext, SourceError
 from server.sources.getchu import (
     AGE_ACK_PARAM,
     ENCODING,
+    GetchuSource,
     has_results,
     parse_product,
     parse_search,
+    rank_search,
     search_url,
 )
+from server.sources.http import HttpClient
 
 
 def _fixture(name: str) -> str:
@@ -286,3 +290,144 @@ def test_empty_search_page_detected(empty_html):
 
 def test_parse_search_on_unrelated_html_returns_empty():
     assert parse_search("<html><body>nothing</body></html>") == []
+
+# ---------------------------------------------------------------- 限定版合集页
+
+
+def _item_html(product_id: str, title: str, *, label: str = "[アニメ・アダルト]") -> str:
+    """搜索结果里一条命中的真实结构（封面链接 + 标题链接 + 分类标签）。
+
+    `a[href*="soft.phtml?id="]` 有两个：外面那个包着封面图，
+    而 parse_search 取的是第一个 —— 标题在后面的 a.blueb 里。
+    """
+    return (
+        "<li><div class='content_block'><div id='package_block'><div class='package'>"
+        f"<a href='../soft.phtml?id={product_id}'><img src='/common/images/space.gif'></a>"
+        "</div></div><div id='detail_block'><div class='content_block'>"
+        f"<a class='blueb' href='../soft.phtml?id={product_id}'>{title}</a>"
+        f"<p><span class='orangeb'>{label}</span></p>"
+        "</div></div></li>"
+    )
+
+
+def _search_page(*items: str) -> str:
+    return "<html><body><ul class='display'>" + "".join(items) + "</ul></body></html>"
+
+
+def _product_page_html(product_id: str, title: str, *, samples: int = 0) -> str:
+    cards = "".join(
+        "<div class='item-Samplecard'>"
+        f"<a class='highslide' href='/brandnew/{product_id}/c{product_id}sample{index}.jpg'>"
+        f"<img src='/brandnew/{product_id}/c{product_id}sample{index}_s.jpg'></a></div>"
+        for index in range(1, samples + 1)
+    )
+    return (
+        "<html><body>"
+        f"<h2 id='soft-title'>{title}</h2>"
+        f"<img src='/brandnew/{product_id}/rc{product_id}package.jpg'>"
+        f"{cards}</body></html>"
+    )
+
+
+BUNDLE_TITLE = "OVA トナリノカノジョ＆OVA ヨゴレタカノジョ【Getchu.com限定版】"
+SINGLE_TITLE = "OVA トナリノカノジョ"
+
+
+def test_rank_search_exposes_ties_so_a_bundle_can_be_skipped():
+    r"""限定版合集页的标题把单品标题整个包在里面，于是关键词、动画标记统统命中、还排在前面。
+
+    实测搜「トナリノカノジョ」：第一条是「OVA トナリノカノジョ＆OVA ヨゴレタカノジョ
+    【Getchu.com限定版】」（合集页，0 张サンプル画像），单品那条排在第二条。
+    两条的排序键**完全相同** —— 光看列表分不出该用哪条，所以键要交出去（rank_search），
+    由调用方抓下来看有没有サンプル画像再定（GetchuSource._pick）。
+    """
+    html = _search_page(
+        _item_html("1331833", BUNDLE_TITLE),
+        _item_html("1331244", SINGLE_TITLE),
+    )
+    ranked = rank_search(html, "トナリノカノジョ")
+    assert [product_id for _, product_id in ranked] == ["1331833", "1331244"]
+    assert ranked[0][0] == ranked[1][0]  # 同分：光排序挑不出来，所以合集排前面
+    assert parse_search(html, "トナリノカノジョ") == ["1331833", "1331244"]
+
+
+async def test_fetch_skips_a_candidate_without_sample_images():
+    r"""同分的候选里，挑第一个真有サンプル画像的。
+
+    实跑复现：两个文件（OVA トナリノカノジョ / OVA ヨゴレタカノジョ）都取了合集页，
+    于是都没有横版剧照，最后只能拿封面当背景图 —— 而单品页各有 20 张真 CG。
+    """
+    search = _search_page(
+        _item_html("1331833", BUNDLE_TITLE),
+        _item_html("1331244", SINGLE_TITLE),
+    )
+    pages = {
+        "1331833": _product_page_html("1331833", BUNDLE_TITLE, samples=0),
+        "1331244": _product_page_html("1331244", SINGLE_TITLE, samples=2),
+    }
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        seen.append(url)
+        if "search.phtml" in url:
+            return httpx.Response(200, content=search.encode(ENCODING))
+        for product_id, html in pages.items():
+            if f"/item/{product_id}/" in url:
+                return httpx.Response(200, content=html.encode(ENCODING))
+        return httpx.Response(404)
+
+    async with HttpClient(transport=httpx.MockTransport(handler)) as client:
+        metadata = await GetchuSource().fetch(
+            client,
+            FetchContext(query="トナリノカノジョ", content_type=ContentType.JANIME),
+        )
+
+    assert metadata is not None
+    assert metadata.title == SINGLE_TITLE
+    assert metadata.fanart_urls == [
+        "https://www.getchu.com/brandnew/1331244/c1331244sample1.jpg",
+        "https://www.getchu.com/brandnew/1331244/c1331244sample2.jpg",
+    ]
+    assert any("/item/1331833/" in url for url in seen)
+
+
+async def test_fetch_never_crosses_the_marker_tier_for_sample_images():
+    r"""为了插图**不能越过集数标记**。
+
+    分数不同说明"该先试谁"有依据。要是为了拿剧照去试别的卷，配上的图就是
+    **另一话**的剧照、标题也是那一话的 —— 比没有图更糟。
+    """
+    front = "朝まで汁だく母娘丼!! 前編"
+    back = "朝まで汁だく母娘丼!! 後編"
+    search = _search_page(_item_html("1326727", front), _item_html("1326924", back))
+    pages = {
+        "1326727": _product_page_html("1326727", front, samples=0),
+        "1326924": _product_page_html("1326924", back, samples=3),
+    }
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        seen.append(url)
+        if "search.phtml" in url:
+            return httpx.Response(200, content=search.encode(ENCODING))
+        for product_id, html in pages.items():
+            if f"/item/{product_id}/" in url:
+                return httpx.Response(200, content=html.encode(ENCODING))
+        return httpx.Response(404)
+
+    async with HttpClient(transport=httpx.MockTransport(handler)) as client:
+        metadata = await GetchuSource().fetch(
+            client,
+            FetchContext(
+                query="朝まで汁だく母娘丼!!",
+                content_type=ContentType.JANIME,
+                extra={"episode_marker": "前編"},
+            ),
+        )
+
+    assert metadata is not None
+    assert metadata.title == front
+    assert metadata.fanart_urls == []
+    assert not any("/item/1326924/" in url for url in seen)  # 别的卷一步都没迈过去
