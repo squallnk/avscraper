@@ -18,6 +18,21 @@ Bangumi 每条都带 `name_cn`（中文名），并且实测**搜索精度极高
 **已知风险**：旧版接口是遗留接口，官方可能下线。所以解析失败一律抛
 `SourceError`（报 `parse_error`）而不是静默返回 None —— 这样在记录页上能看出
 "是这个源坏了"而不是"这部作品没有"。
+
+**详情接口的实测结论（2026-09，三个 id 对照）**：
+
+| 条目 | 类型 | `GET /subject/{id}?responseGroup=large` |
+|---|---|---|
+| 536363 気絶勇者と暗殺姫 | 普通番剧 | 200，返回 staff / crt / eps / rating / rank |
+| 584818 牝を狩る村 | 里番 | **404** |
+| 421743 1LDK＋J系 | 里番 | **404** |
+
+**旧版详情接口不返回 NSFW 条目** —— 也就是恰好不返回我们最需要的那一类。
+所以这里不做第二次请求：简介与发售日直接取搜索结果自带的字段
+（见 `parse_search`），代价是必须让搜索接口返回它们。
+
+另外实测该详情响应里**没有 `tags` 也没有 `infobox`**，
+所以厂牌/中文别名也别指望从这个接口拿。
 """
 
 from __future__ import annotations
@@ -83,6 +98,13 @@ def parse_search(payload: str, query: str) -> MediaMetadata | None:
     name = (item.get("name") or "").strip()
     name_cn = (item.get("name_cn") or "").strip()
 
+    # 简介与发售日：搜索条目里就带这两个字段，不用再请求详情页
+    # （详情页恰好对 NSFW 条目返回 404，见模块文档）。
+    # 实测 responseGroup=small 时这两个字段是空串，large 时才有值，
+    # 所以这里按"有就用、没有就算了"处理，不额外发请求。
+    summary = (item.get("summary") or "").strip()
+    air_date = (item.get("air_date") or "").strip()
+
     images = item.get("images") or {}
     poster = None
     for key in _IMAGE_KEY_ORDER:
@@ -96,6 +118,9 @@ def parse_search(payload: str, query: str) -> MediaMetadata | None:
         title=name_cn or name or None,
         original_title=name or None,
         poster_url=poster,
+        plot=summary or None,
+        release_date=air_date or None,
+        year=int(air_date[:4]) if air_date[:4].isdigit() else None,
         website=item.get("url") or (f"https://bgm.tv/subject/{item['id']}" if item.get("id") else None),
     )
 

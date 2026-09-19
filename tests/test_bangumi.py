@@ -97,6 +97,36 @@ def test_invalid_json_is_reported():
     assert excinfo.value.reason == "parse_error"
 
 
+def test_summary_and_air_date_are_taken_from_the_search_item():
+    """简介与发售日直接取搜索条目自带的字段，不再请求详情页。
+
+    详情页对 NSFW 条目返回 404（实测 584818 / 421743 都是），而我们要刮的恰恰
+    全是 NSFW —— 所以简介只能从这里来。这两个键名来自真实响应（small 固件里
+    它们存在但是空串），值按 536363 真实详情响应的日期与简介片段填入。
+    """
+    payload = json.loads(load_fixture("bgm_ldk.json"))
+    payload["list"][0]["summary"] = "勇者トトは、実力はあるが極度の人見知りのため…"
+    payload["list"][0]["air_date"] = "2025-07-12"
+
+    meta = parse_search(json.dumps(payload, ensure_ascii=False), "1LDK")
+    assert meta is not None
+    assert meta.plot and meta.plot.startswith("勇者トト")
+    assert meta.release_date == "2025-07-12"
+    assert meta.year == 2025
+
+
+def test_missing_summary_and_air_date_stay_empty():
+    """small 响应里这两个字段是空串 —— 不能变成 `""` 塞进元数据。
+
+    空串进 NFO 就是空的 `<plot>` 标签，还会让聚合器以为这个字段已经填好了。
+    """
+    meta = _parse("bgm_onabarukai.json", "牝を狩る村")
+    assert meta is not None
+    assert meta.plot is None
+    assert meta.release_date is None
+    assert meta.year is None
+
+
 def test_descriptor_is_usable_without_proxy_or_cookie():
     """Bangumi 是公开 API —— 不需要代理也不需要 Cookie，这是它最大的优点。"""
     from server.sources.bangumi import PLUGIN
