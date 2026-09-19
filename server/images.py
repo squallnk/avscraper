@@ -36,6 +36,14 @@ logger = logging.getLogger(__name__)
 
 IMAGE_SUFFIX = ".jpg"
 
+# 每类图片对应聚合结果里的哪个字段 —— 决定兜底 Referer 取谁的
+_REFERER_FIELD = {
+    "poster": "poster_url",
+    "fanart": "fanart_urls",
+    "extrafanart": "fanart_urls",
+    "thumb": "thumb_urls",
+}
+
 
 @dataclass
 class ImageTask:
@@ -177,34 +185,64 @@ class ImageDownloader:
             report.failed.append(f"元数据目录不可写: {exc}")
             return report
 
-        referer = self._referer_for(aggregated, "poster_url")
         semaphore = asyncio.Semaphore(config.concurrency)
 
         async def one(task: ImageTask) -> None:
             async with semaphore:
-                await self._download_one(task, metadata_dir, report, referer, config, overwrite)
+                await self._download_one(task, metadata_dir, report, aggregated, config, overwrite)
 
         await asyncio.gather(*(one(task) for task in tasks), return_exceptions=True)
         return report
 
+    def _referer_for_url(
+        self, url: str, aggregated: AggregatedMetadata, field_name: str
+    ) -> str | None:
+        r"""图片地址通常校验同源 Referer，带上来源站主页。
+
+        **先看图片自己的域名是不是某个源的主页域名** —— getchu 就是这样：
+
+            https://www.getchu.com/brandnew/<id>/c<id>sample1.jpg
+            不带 Referer          -> 403
+            带 bgm.tv 的 Referer  -> 403
+            带 getchu 的 Referer  -> 200
+
+        而它的图片域名正好等于它的主页域名，所以按域名匹配就够。
+
+        图片放在**别的**域名上时（javdb 的 c0.jdbstatic.com）匹配不到，
+        退回"谁上报了这个字段"，取它的主页。
+        """
+        from urllib.parse import urlparse
+
+        from server.sources import all_sources
+
+        host = (urlparse(url).hostname or "").lower()
+        if host:
+            for plugin in all_sources():
+                home = plugin.descriptor.homepage or ""
+                if home and (urlparse(home).hostname or "").lower() == host:
+                    return home
+        return self._referer_for(aggregated, field_name)
+
     def _referer_for(self, aggregated: AggregatedMetadata, field_name: str) -> str | None:
-        """图片地址通常校验同源 Referer（javbus 的 pics.dmm.co.jp 就是），带上来源站主页。"""
         from server.sources import get as get_source
 
         origin = aggregated.field_sources.get(field_name)
         if not origin:
             return None
-        plugin = get_source(origin)
-        if plugin is None:
-            return None
-        return plugin.descriptor.homepage or None
+        # 列表字段的来源是逗号拼起来的（"javdb,freejavbt"）—— 以前直接拿整串去查，
+        # 查不到就返回 None，等于背景图从来不带 Referer。取第一个认得的。
+        for source_id in origin.split(","):
+            plugin = get_source(source_id.strip())
+            if plugin is not None:
+                return plugin.descriptor.homepage or None
+        return None
 
     async def _download_one(
         self,
         task: ImageTask,
         metadata_dir: Path,
         report: ImageReport,
-        referer: str | None,
+        aggregated: AggregatedMetadata,
         config: ImageDownloadConfig,
         overwrite: bool,
     ) -> None:
@@ -213,8 +251,12 @@ class ImageDownloader:
             report.skipped.append(f"{task.kind}: 已存在")
             return
 
+        field_name = _REFERER_FIELD.get(task.kind, "poster_url")
         too_small: list[str] = []
         for url in task.candidates:
+            # Referer 要**逐候选**算：同一张图的候选可能来自不同站点
+            # （getchu 的剧照 + 封面的兜底），一个站点一个规矩。
+            referer = self._referer_for_url(url, aggregated, field_name)
             try:
                 data = await self._ctx.http.get_bytes(url, source=task.kind, referer=referer)
             except Exception as exc:  # noqa: BLE001 - 试下一张候选

@@ -119,6 +119,74 @@ async def test_hd_cover_404_falls_back_to_the_source_poster(tmp_path):
     assert report.failed == []
 
 
+# ---------------------------------------------------------------- 图片 Referer
+
+
+async def test_getchu_images_get_the_getchu_referer(tmp_path):
+    r"""getchu 的图**必须**带 getchu 自己的 Referer。
+
+    实测 `https://www.getchu.com/brandnew/<id>/c<id>sample1.jpg`：
+    不带 Referer -> 403，带 bgm.tv 的 -> 403，带 getchu 的 -> 200。
+
+    而以前整批图片只算**一个** Referer，取的是 `poster_url` 的来源 ——
+    对这些文件来说海报来自 bangumi，于是 getchu 的剧照一律 403 被丢掉，
+    最后只能拿竖版封面兜底（`-fanart.jpg` 和 `-poster.jpg` 是同一张）。
+
+    这里故意把字段来源写成 javdb：**域名匹配要压过字段来源**。
+    """
+    url = "https://www.getchu.com/brandnew/1/c1sample1.jpg"
+    http = _FakeHttp({url: b"x"})
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(poster=False, fanart=True, fanart_min_width=0),
+    )
+    aggregated = AggregatedMetadata(
+        number=None,
+        content_type=ContentType.JANIME,
+        field_sources={"poster_url": "bangumi", "fanart_urls": "javdb"},
+    )
+
+    await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(poster_url=None, fanart_urls=[url]),
+        aggregated=aggregated,
+        metadata_dir=tmp_path / "media" / "meta",
+    )
+    assert referer_of(http, url) == "https://www.getchu.com"
+
+
+async def test_foreign_image_host_falls_back_to_the_field_source(tmp_path):
+    """图片放在别的域名上（javdb 的 c0.jdbstatic.com）时，按"谁上报了这个字段"取主页。"""
+    url = "https://c0.jdbstatic.com/samples/a_s_0.jpg"
+    http = _FakeHttp({url: b"x"})
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(poster=False, fanart=True, fanart_min_width=0),
+    )
+    aggregated = AggregatedMetadata(
+        number=None,
+        content_type=ContentType.CENSORED,
+        field_sources={"poster_url": "javbus", "fanart_urls": "javdb,freejavbt"},
+    )
+
+    await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(number=None, poster_url=None, fanart_urls=[url]),
+        aggregated=aggregated,
+        metadata_dir=tmp_path / "media" / "meta",
+    )
+    # 列表字段的来源是逗号拼起来的 —— 以前直接拿整串去查源，查不到就等于没有 Referer
+    assert referer_of(http, url) == "https://javdb.com"
+
+
+def test_referer_of_list_fields_takes_the_first_known_source():
+    """回归：`field_sources` 里存的是 "javdb,freejavbt" 这种逗号串。"""
+    ctx = _ctx(Path("."), _FakeHttp({}))
+    aggregated = AggregatedMetadata(field_sources={"fanart_urls": "javdb,freejavbt"})
+    assert ImageDownloader(ctx)._referer_for(aggregated, "fanart_urls") == "https://javdb.com"
+    assert ImageDownloader(ctx)._referer_for(aggregated, "不存在的字段") is None
+
+
 def test_config_from_a_previous_version_still_loads():
     r"""去掉 ``thumb`` 是一次**单向下线**：库里存的配置 JSON 还带着这个键。
 
@@ -227,15 +295,26 @@ class _FakeHttp:
     def __init__(self, mapping: dict[str, bytes | Exception]) -> None:
         self.mapping = mapping
         self.calls: list[str] = []
+        self.referers: list[str | None] = []
 
     async def get_bytes(self, url: str, *, source: str, referer: str | None = None) -> bytes:
         self.calls.append(url)
+        self.referers.append(referer)
         result = self.mapping.get(url)
         if isinstance(result, Exception):
             raise result
         if result is None:
             raise HttpError("404")
         return result
+
+
+def referer_of(http: _FakeHttp, url: str) -> str | None:
+    """取某个 URL 实际带上的 Referer。
+
+    图片任务是并发跑的，``referers[0]`` 属于哪张图不确定 —— 必须按 URL 查。
+    """
+    assert url in http.calls, f"没有请求过 {url}"
+    return http.referers[http.calls.index(url)]
 
 
 class _Ctx:
