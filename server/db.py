@@ -299,8 +299,31 @@ class Database:
         await self.conn.commit()
         return updated
 
-    async def known_paths(self) -> set[str]:
+    # 这里刻意分成两个问题，它们的答案不一样：
+    #
+    #   "这个路径有没有被记录过？"   -> tracked_paths()   事件去重（CD2 webhook）
+    #   "这个路径是不是已经做完了？" -> succeeded_paths() 批量扫描跳过
+    #
+    # 合并成一个就会出问题：webhook 靠"记录过"来保证同一条事件重复到达时
+    # 不重复刮削；而扫描要靠"成功过"来保证没搞定的文件下次还会再试。
+
+    async def tracked_paths(self) -> set[str]:
+        """有记录的路径，不论状态。CD2 事件去重用。"""
         cur = await self.conn.execute("SELECT path FROM scrape_records")
+        return {r["path"] for r in await cur.fetchall()}
+
+    async def succeeded_paths(self) -> set[str]:
+        """已经**成功**刮过的路径，批量扫描跳过用。
+
+        只算 `success`。之前这里返回全部路径，于是 not_found / need_selection /
+        failed 的记录也变成"已知"，重扫会永远跳过它们 —— 源后来能搜到了、
+        或者你在记录页手动重刮修好了，也轮不到它们再试一次。
+        "跳过已知"的本意是"别重复做已经做完的事"，没做完的不算做完。
+        """
+        cur = await self.conn.execute(
+            "SELECT path FROM scrape_records WHERE status = ?",
+            (ScrapeStatus.SUCCESS.value,),
+        )
         return {r["path"] for r in await cur.fetchall()}
 
     @staticmethod

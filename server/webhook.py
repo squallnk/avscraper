@@ -243,8 +243,8 @@ class WebhookProcessor:
             outcome.skipped.append(f"非视频文件: {event.virtual_path}")
             return
 
-        known = await self._ctx.db.known_paths()
-        if str(local) in known:
+        tracked = await self._ctx.db.tracked_paths()
+        if str(local) in tracked:
             return
 
         if self._ctx.config.webhook_auto_scrape:
@@ -304,14 +304,14 @@ class WebhookProcessor:
         return outcome
 
     async def _scan_subtree(self, root: Path, outcome: WebhookOutcome, *, limit: int) -> None:
-        known = await self._ctx.db.known_paths()
+        tracked = await self._ctx.db.tracked_paths()
         scanned = 0
         for path in self._ctx.storage.iter_videos(root, recursive=True):
             scanned += 1
             if scanned > limit:
                 outcome.warnings.append(f"目录 {root} 超过扫描上限 {limit}，已截断")
                 break
-            if str(path) in known:
+            if str(path) in tracked:
                 continue
             outcome.registered.append(str(path))
             if self._ctx.config.webhook_auto_scrape:

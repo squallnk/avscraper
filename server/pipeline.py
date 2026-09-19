@@ -281,10 +281,10 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
     for root in roots:
         files.extend(ctx.storage.iter_videos(root, recursive=recursive))
 
-    known = await ctx.db.known_paths()
+    succeeded = await ctx.db.succeeded_paths()
     skip_known = bool(task.payload.get("skip_known", True))
     if skip_known:
-        files = [f for f in files if str(f) not in known]
+        files = [f for f in files if str(f) not in succeeded]
     if limit > 0:
         files = files[:limit]
 
