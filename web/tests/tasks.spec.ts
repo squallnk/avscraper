@@ -83,6 +83,19 @@ describe('扫描任务的提交内容', () => {
     expect(body.write_metadata).toBe(true)
   })
 
+  it('打开「重写已有图片」后会带上 overwrite_images', async () => {
+    // 起因：改了图片相关的代码之后重跑，已有图片被直接跳过，看起来跟没改一样。
+    const wrapper = await mountTasks()
+    await switchNear(wrapper, '旧图会被直接跳过').trigger('click')
+    const body = await submit(wrapper)
+    expect(body.overwrite_images).toBe(true)
+  })
+
+  it('「重写已有图片」默认关着', async () => {
+    const body = await submit(await mountTasks())
+    expect(body.overwrite_images).toBe(false)
+  })
+
   it('「跳过已成功的」也是真的开关', async () => {
     const wrapper = await mountTasks()
     await switchNear(wrapper, '也重新刮一次').trigger('click')

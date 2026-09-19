@@ -632,4 +632,67 @@ async def test_all_candidates_too_small_is_reported_as_skipped(tmp_path):
         metadata_dir=tmp_path / "media" / "meta",
     )
     assert report.written == []
-    assert any("小于" in item for item in report.skipped)
+    assert any("不合格" in item for item in report.skipped)
+
+
+async def test_fanart_prefers_a_landscape_candidate(tmp_path):
+    r"""背景图必须是横版，不能抓到第一张就用。
+
+    实跑里 getchu 的剧照是**混着**的 —— 同一部作品：
+
+        sample1  715 x 800   竖版
+        sample2  800 x 770   横版
+        sample3  800 x 450   横版
+
+    只取第一张的话，背景图还是竖的，只是不再是封面的复制品而已。
+    所以要往下试，试到横版为止；全都竖版的话才回退到封面。
+    """
+    http = _FakeHttp(
+        {
+            "https://img.test/s1.jpg": _jpeg(715, 800),   # 竖版，跳过
+            "https://img.test/s2.jpg": _jpeg(800, 770),   # 横版，用它
+            "https://img.test/poster.jpg": _jpeg(566, 800),
+        }
+    )
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(poster=False, fanart=True, fanart_min_width=400),
+    )
+    metadata_dir = tmp_path / "media" / "meta"
+
+    await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(
+            poster_url="https://img.test/poster.jpg",
+            fanart_urls=["https://img.test/s1.jpg", "https://img.test/s2.jpg"],
+        ),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.JANIME),
+        metadata_dir=metadata_dir,
+    )
+    assert (metadata_dir / "MIDV-123-fanart.jpg").read_bytes() == _jpeg(800, 770)
+    assert http.calls == ["https://img.test/s1.jpg", "https://img.test/s2.jpg"]
+
+
+async def test_fanart_falls_back_to_the_cover_when_all_are_portrait(tmp_path):
+    """横版一个都没有时，宁可回退到封面：有背景图总比没有强。"""
+    http = _FakeHttp(
+        {
+            "https://img.test/s1.jpg": _jpeg(715, 800),
+            "https://img.test/poster.jpg": _jpeg(566, 800),
+        }
+    )
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(poster=False, fanart=True, fanart_min_width=400),
+    )
+    metadata_dir = tmp_path / "media" / "meta"
+
+    await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(
+            poster_url="https://img.test/poster.jpg", fanart_urls=["https://img.test/s1.jpg"]
+        ),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.JANIME),
+        metadata_dir=metadata_dir,
+    )
+    assert (metadata_dir / "MIDV-123-fanart.jpg").read_bytes() == _jpeg(566, 800)

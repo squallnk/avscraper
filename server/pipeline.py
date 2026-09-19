@@ -332,6 +332,10 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
                         or ctx.config.metadata_dir
                         or path.parent
                     ),
+                    # 默认跟随 images.overwrite（不覆盖已有的图）。但要给一个"重写"
+                    # 的口子：改了图片相关的代码/设置之后重跑，旧图会一直被跳过，
+                    # 看起来跟没改一样 —— 这个坑踩过好几次了。
+                    overwrite_images=True if task.payload.get("overwrite_images") else None,
                 )
         elif record.status is ScrapeStatus.NEED_SELECTION:
             pending += 1

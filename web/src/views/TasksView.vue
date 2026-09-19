@@ -9,6 +9,7 @@ const roots = ref('')
 const limit = ref(0)
 const skipKnown = ref(true)
 const writeMetadata = ref(false)
+const overwriteImages = ref(false)
 const confirm = ref(false)
 let timer: number | undefined
 
@@ -31,6 +32,7 @@ async function start() {
       limit: limit.value,
       skip_known: skipKnown.value,
       write_metadata: writeMetadata.value,
+      overwrite_images: overwriteImages.value,
       confirm: true,
     }
     if (roots.value.trim()) {
@@ -75,6 +77,15 @@ onUnmounted(() => window.clearInterval(timer))
           <n-switch v-model:value="skipKnown" />
           <span style="color: #888">
             关掉则连「未命中 / 待确认 / 失败」的记录也重新刮一次（成功过的不受影响）
+          </span>
+        </n-space>
+      </n-form-item>
+      <n-form-item label="重写已有图片">
+        <n-space align="center">
+          <n-switch v-model:value="overwriteImages" />
+          <span style="color: #888">
+            已有同名图片时重新下载。改了图片相关的设置、或者刚升级过版本要重做，
+            得打开它 —— 否则旧图会被直接跳过，看起来跟没改一样
           </span>
         </n-space>
       </n-form-item>

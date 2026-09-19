@@ -361,6 +361,8 @@ class ScanRequest(BaseModel):
     limit: int = 0
     skip_known: bool = True
     write_metadata: bool = False
+    overwrite_images: bool = False
+    """已有同名图片时重新下载。默认 false（跳过），因为重下费流量。"""
     metadata_dir: str | None = None
     confirm: bool = False
 
@@ -386,6 +388,7 @@ async def start_scan(payload: ScanRequest, request: Request) -> dict[str, Any]:
             "limit": payload.limit,
             "skip_known": payload.skip_known,
             "write_metadata": payload.write_metadata,
+            "overwrite_images": payload.overwrite_images,
             "metadata_dir": payload.metadata_dir,
         },
     )

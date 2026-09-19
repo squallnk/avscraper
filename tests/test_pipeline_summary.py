@@ -14,7 +14,7 @@ import pytest
 
 from server import pipeline
 from server.config import RuntimeConfig
-from server.models import ContentType, ScrapeRecord, ScrapeStatus
+from server.models import ContentType, MediaMetadata, ScrapeRecord, ScrapeStatus
 
 
 class _Db:
@@ -85,6 +85,49 @@ async def test_summary_text_names_every_bucket(monkeypatch):
 
     assert "待确认 3" in task.message
     assert "失败 0" in task.message
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({}, None),
+        ({"overwrite_images": False}, None),
+        ({"overwrite_images": True}, True),
+    ],
+)
+async def test_scan_passes_overwrite_images_through(monkeypatch, payload, expected):
+    r"""任务里的「重写已有图片」要真的传到落盘那一步。
+
+    默认 `None` = 跟随 `images.overwrite`（不覆盖）。显式 True 才会重下 ——
+    改了图片相关的代码/设置之后重跑，不开这个的话旧图会被跳过，看起来跟没改一样。
+    """
+    seen: list[object] = []
+
+    async def fake_scrape_one(ctx, path, **kwargs):  # noqa: ANN001, ANN202, ARG001
+        record = _record(str(path), ScrapeStatus.SUCCESS)
+        # 落盘那一步要求 record.metadata 非空（没元数据就没什么可写）
+        record.metadata = MediaMetadata(title="x")
+        return record
+
+    async def fake_write(ctx, *, record, video_path, metadata_dir, overwrite_images=None):  # noqa: ANN001, ANN202, ARG001
+        seen.append(overwrite_images)
+        return []
+
+    monkeypatch.setattr(pipeline, "scrape_one", fake_scrape_one)
+    monkeypatch.setattr(pipeline, "write_record_metadata", fake_write)
+
+    ctx = SimpleNamespace(
+        config=RuntimeConfig(),
+        db=_Db(),
+        storage=_Storage(),
+        settings=SimpleNamespace(allowed_roots=[Path("/media")]),
+    )
+    task = SimpleNamespace(
+        payload={**payload, "write_metadata": True}, total=0, current=0, message="", result={}
+    )
+    await pipeline.run_scan_and_scrape(ctx, task)  # type: ignore[arg-type]
+
+    assert seen == [expected] * 3
 
 
 @pytest.mark.parametrize(

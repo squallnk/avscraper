@@ -252,7 +252,7 @@ class ImageDownloader:
             return
 
         field_name = _REFERER_FIELD.get(task.kind, "poster_url")
-        too_small: list[str] = []
+        rejected: list[str] = []
         for url in task.candidates:
             # Referer 要**逐候选**算：同一张图的候选可能来自不同站点
             # （getchu 的剧照 + 封面的兜底），一个站点一个规矩。
@@ -271,9 +271,16 @@ class ImageDownloader:
                 and url not in task.min_width_exempt
             ):
                 size = image_size(data)
-                if size is not None and size[0] < config.fanart_min_width:
-                    too_small.append(f"{size[0]}x{size[1]}")
-                    continue
+                if size is not None:
+                    if size[0] < config.fanart_min_width:
+                        rejected.append(f"{size[0]}x{size[1]}")
+                        continue
+                    if size[1] > size[0]:
+                        # 竖版图当背景图会被拉伸或裁掉大半。getchu 的剧照是**混着**的：
+                        # 同一部作品 sample1 是 715x800 竖版、sample3 是 800x450 横版 ——
+                        # 只取第一张的话，背景图还是竖的，只是不再是封面的复制品而已。
+                        rejected.append(f"{size[0]}x{size[1]} 竖版")
+                        continue
 
             try:
                 report.written.append(self._ctx.storage.write_bytes(target, data))
@@ -281,9 +288,10 @@ class ImageDownloader:
                 report.failed.append(f"{task.kind}: 写入失败 {exc}")
             return
 
-        if too_small:
+        if rejected:
             report.skipped.append(
-                f"{task.kind}: 候选图都小于 {config.fanart_min_width}px（{', '.join(too_small)}）"
+                f"{task.kind}: 候选都不合格（要 >= {config.fanart_min_width}px 且横版）："
+                f"{', '.join(rejected)}"
             )
         else:
             report.failed.append(f"{task.kind}: {len(task.candidates)} 个候选全部失败")
