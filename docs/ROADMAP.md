@@ -41,6 +41,7 @@
 - [x] NFO 生成（movie / tvshow / episode）
 - [x] **图片下载**（海报/缩略图/背景图/剧照各自可关；剧照默认关闭并可限张数；候选 URL 逐个回退）
 - [x] **里番季集解析**（第N話/其の弍/前編/＃N/Vol.N/SxxEyy + 汉字数字 + 分集兜底）
+- [x] **人工重刮**（`need_selection` / `not_found` 的出口：换关键词、指定源、跳过匹配校验，先预览再写；预览默认不碰磁盘，写入要 `confirm=true`，人工拍板的记录会在 `error` 里留痕）
 - [x] 任务队列与 worker、Vue 3 + Naive UI 前端
 
 ## 下一步（按优先级）

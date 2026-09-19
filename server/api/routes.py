@@ -412,6 +412,87 @@ async def get_record(record_id: str, request: Request) -> dict[str, Any]:
     return record.model_dump(mode="json")
 
 
+class RescanRequest(BaseModel):
+    """人工重刮。默认只预览，不碰磁盘。"""
+
+    query: str | None = None
+    """换一个关键词重搜。留空表示沿用原查询。"""
+
+    source: str | None = None
+    """只查这一个源。留空表示按正常路由。"""
+
+    force: bool = False
+    """跳过自动匹配校验 —— 你看着预览结果点确认，比机器猜得准。"""
+
+    write: bool = False
+    """是否立即写 NFO 与图片。"""
+
+    metadata_dir: str | None = None
+    confirm: bool = False
+    """`write=true` 时必须显式确认，与其它写操作一致。"""
+
+
+@router.post("/records/{record_id}/rescan")
+async def rescan_record(
+    record_id: str, payload: RescanRequest, request: Request
+) -> dict[str, Any]:
+    """按新的查询词/指定源重刮一条记录，可先预览再写。
+
+    这是 `need_selection` 的出口：自动匹配说不准时，不该直接写进媒体库，
+    也不该就此卡住 —— 由人换词、指定源，看着预览结果拍板。
+    """
+    from pathlib import Path as _Path
+
+    from server.pipeline import scrape_one, write_record_metadata
+
+    ctx = get_ctx(request)
+    record = await ctx.db.get_record(record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="记录不存在")
+
+    if payload.source:
+        plugin = source_by_id(payload.source)
+        if plugin is None:
+            raise HTTPException(status_code=404, detail="未知数据源")
+        enabled = ctx.config.enabled_sources
+        if enabled and payload.source not in enabled:
+            raise HTTPException(
+                status_code=422,
+                detail=f"源 {payload.source} 已在设置里被禁用，启用后再试",
+            )
+
+    if payload.write and not payload.confirm:
+        raise HTTPException(status_code=400, detail="需要 confirm=true 才会写入文件")
+
+    path = _Path(record.path)
+    try:
+        fresh = await scrape_one(
+            ctx,
+            path,
+            query_override=(payload.query or "").strip() or None,
+            source_pin=payload.source,
+            force_success=payload.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - 把失败原文报给界面，便于排查
+        raise HTTPException(status_code=502, detail=f"重刮失败: {exc}") from exc
+
+    written: list[str] = []
+    if payload.write and fresh.status is ScrapeStatus.SUCCESS:
+        target = _Path(payload.metadata_dir or ctx.config.metadata_dir or path.parent)
+        try:
+            written = [str(p) for p in await write_record_metadata(
+                ctx, record=fresh, video_path=path, metadata_dir=target
+            )]
+        except Exception as exc:  # noqa: BLE001 - 同上
+            raise HTTPException(status_code=502, detail=f"写元数据失败: {exc}") from exc
+
+    return {
+        "record": fresh.model_dump(mode="json"),
+        "written": written,
+        "writes_enabled": ctx.storage.writes_enabled,
+    }
+
+
 # ---------------------------------------------------------------- 日志
 
 

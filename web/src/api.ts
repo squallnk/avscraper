@@ -38,7 +38,6 @@ export interface RuntimeConfig {
   webhook_max_subtree_files: number
   webhook_auto_scrape: boolean
   source_cookies: Record<string, string>
-  metadata_dir: string
   images: ImageDownloadConfig
 }
 
@@ -84,9 +83,31 @@ export interface TaskInfo {
   result: Record<string, unknown>
 }
 
+export interface MediaMetadataInfo {
+  number?: string | null
+  title?: string | null
+  original_title?: string | null
+  plot?: string | null
+  director?: string | null
+  studio?: string | null
+  publisher?: string | null
+  series?: string | null
+  release_date?: string | null
+  year?: number | null
+  runtime?: number | null
+  score?: number | null
+  poster_url?: string | null
+  website?: string | null
+  actors?: string[]
+  tags?: string[]
+  thumb_urls?: string[]
+  fanart_urls?: string[]
+}
+
 export interface RecordInfo {
   id: string
   path: string
+  provider: string
   number: string | null
   content_type: string
   season: number | null
@@ -96,8 +117,23 @@ export interface RecordInfo {
   status: string
   error: string | null
   field_sources: Record<string, string>
-  metadata: Record<string, unknown> | null
+  metadata: MediaMetadataInfo | null
   updated_at: string
+}
+
+export interface RescanRequest {
+  query?: string
+  source?: string
+  force?: boolean
+  write?: boolean
+  metadata_dir?: string
+  confirm?: boolean
+}
+
+export interface RescanResult {
+  record: RecordInfo
+  written: string[]
+  writes_enabled: boolean
 }
 
 export interface ClassifyInfo {
@@ -148,6 +184,11 @@ export const api = {
     call<{ task_id: string }>('/api/tasks/scan', { method: 'POST', body: JSON.stringify(payload) }),
   records: (status?: string) =>
     call<RecordInfo[]>(status ? `/api/records?status=${status}` : '/api/records'),
+  rescan: (id: string, payload: RescanRequest) =>
+    call<RescanResult>(`/api/records/${id}/rescan`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   logs: () => call<{ level: string; logger: string; message: string; created_at: string }[]>('/api/logs'),
   classify: (path: string) =>
     call<ClassifyInfo>('/api/classify', { method: 'POST', body: JSON.stringify({ path }) }),

@@ -37,15 +37,31 @@ logger = logging.getLogger(__name__)
 MIN_SIZE_MB_DEFAULT = 50
 
 
-async def scrape_one(ctx: AppContext, path: Path) -> ScrapeRecord:
-    """刮削单个文件并写记录。不落盘。"""
+async def scrape_one(
+    ctx: AppContext,
+    path: Path,
+    *,
+    query_override: str | None = None,
+    source_pin: str | None = None,
+    force_success: bool = False,
+) -> ScrapeRecord:
+    """刮削单个文件并写记录。不落盘。
+
+    后三个参数是给"人工重刮"用的：自动跑的时候一个都不用。
+    - `query_override`：换一个关键词重搜（清洗规则猜错时的出口）；
+    - `source_pin`：只查某一个源；
+    - `force_success`：跳过匹配校验 —— 人在界面上看着预览结果点确认，
+      比机器猜得准。这时会在 `error` 里留一条"人工确认"的痕迹，便于回溯。
+    """
     match = classify(path)
 
     # 没有番号时（里番、国产等）查询只能用作品名。
     # **必须清洗**：直接拿 path.stem 会把日期、制作组、集数、副标题、语言后缀
     # 一起丢给站点，一个都搜不到。
     query = None
-    if not match.number:
+    if query_override:
+        query = query_override
+    elif not match.number:
         from server.cleaner import clean_query_name
 
         query = clean_query_name(path.name) or path.stem
@@ -75,10 +91,16 @@ async def scrape_one(ctx: AppContext, path: Path) -> ScrapeRecord:
         await ctx.db.upsert_record(record)
         return record
 
+    route_override = dict(ctx.config.route_override)
+    if source_pin:
+        # 只查这一个源：把该内容类型的路由整个换掉。
+        # 字段优先级随后作用在这条单元素路由上，不会把别的源又拉回来。
+        route_override[match.content_type.value] = [source_pin]
+
     aggregated: AggregatedMetadata = await ctx.aggregator.run(
         ctx_info,
         field_priority=ctx.config.field_priority,
-        route_override=ctx.config.route_override,
+        route_override=route_override,
         use_cache=True,
         cache_lookup=ctx.db.get_snapshot,
         cache_store=ctx.db.save_snapshot,
@@ -98,7 +120,7 @@ async def scrape_one(ctx: AppContext, path: Path) -> ScrapeRecord:
         record.status = ScrapeStatus.NOT_FOUND
         failures = [f"{r.source}: {r.failure_reason}" for r in aggregated.sources]
         record.error = "所有源均未命中（" + ", ".join(failures) + "）"
-    elif query and not query_matches_metadata(query, aggregated.metadata):
+    elif query and not force_success and not query_matches_metadata(query, aggregated.metadata):
         # 站点搜索是模糊的：库里没有这部作品时会返回"最像的"一条，
         # 通常是毫不相干的片子。这种结果不能当成功写进媒体库。
         record.status = ScrapeStatus.NEED_SELECTION
@@ -108,6 +130,9 @@ async def scrape_one(ctx: AppContext, path: Path) -> ScrapeRecord:
         )
     else:
         record.status = ScrapeStatus.SUCCESS
+        if force_success and query and not query_matches_metadata(query, aggregated.metadata):
+            grabbed = (aggregated.metadata.title or "")[:60]
+            record.error = f"人工确认后采用：查询「{query}」，抓回标题「{grabbed}」"
 
     await ctx.db.upsert_record(record)
     return record
@@ -203,6 +228,36 @@ async def write_metadata(
     return written
 
 
+async def write_record_metadata(
+    ctx: AppContext,
+    *,
+    record: ScrapeRecord,
+    video_path: Path,
+    metadata_dir: Path,
+) -> list[Path]:
+    """把一条记录落盘成 NFO + 图片。
+
+    批量任务和"人工重刮后写入"走的是同一条路，
+    免得两边各写一套、最后只有一边修了 bug。
+    """
+    if record.metadata is None:
+        return []
+    return await write_metadata(
+        ctx,
+        metadata=record.metadata,
+        aggregated=AggregatedMetadata(
+            number=record.number,
+            content_type=record.content_type,
+            metadata=record.metadata,
+            field_sources=record.field_sources,
+        ),
+        metadata_dir=metadata_dir,
+        video_path=video_path,
+        season=record.season,
+        episode=record.episode,
+    )
+
+
 async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
     """任务处理器：扫描允许根目录下的视频并逐个刮削。"""
     roots = [Path(p) for p in task.payload.get("roots", [])] or ctx.settings.allowed_roots
@@ -241,24 +296,15 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
             succeeded += 1
             if record.metadata and task.payload.get("write_metadata"):
                 # 默认写在视频旁边 —— `.metadata/` 子目录 Emby 不认，等于白写
-                metadata_dir = Path(
-                    task.payload.get("metadata_dir")
-                    or ctx.config.metadata_dir
-                    or path.parent
-                )
-                await write_metadata(
+                await write_record_metadata(
                     ctx,
-                    metadata=record.metadata,
-                    aggregated=AggregatedMetadata(
-                        number=record.number,
-                        content_type=record.content_type,
-                        metadata=record.metadata,
-                        field_sources=record.field_sources,
-                    ),
-                    metadata_dir=metadata_dir,
+                    record=record,
                     video_path=path,
-                    season=record.season,
-                    episode=record.episode,
+                    metadata_dir=Path(
+                        task.payload.get("metadata_dir")
+                        or ctx.config.metadata_dir
+                        or path.parent
+                    ),
                 )
         elif record.status is ScrapeStatus.SKIPPED:
             skipped += 1
@@ -284,4 +330,5 @@ __all__ = [
     "run_scan_and_scrape",
     "scrape_one",
     "write_metadata",
+    "write_record_metadata",
 ]
