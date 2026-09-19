@@ -303,6 +303,10 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
     succeeded = 0
     failed = 0
     skipped = 0
+    # 「需要人工确认」和「哪都没有」都不是失败 —— 之前它们和真失败一起算进
+    # "失败"，于是"成功 0，失败 1"读起来像运行出错了，其实只是有一条要你拍板。
+    pending = 0
+    missing = 0
 
     for index, path in enumerate(files, start=1):
         task.current = index
@@ -329,13 +333,28 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
                         or path.parent
                     ),
                 )
+        elif record.status is ScrapeStatus.NEED_SELECTION:
+            pending += 1
+        elif record.status is ScrapeStatus.NOT_FOUND:
+            missing += 1
         elif record.status is ScrapeStatus.SKIPPED:
             skipped += 1
         else:
             failed += 1
 
-    task.result.update({"succeeded": succeeded, "failed": failed, "skipped": skipped})
-    task.message = f"完成：成功 {succeeded}，失败 {failed}，跳过 {skipped}"
+    task.result.update(
+        {
+            "succeeded": succeeded,
+            "need_selection": pending,
+            "not_found": missing,
+            "failed": failed,
+            "skipped": skipped,
+        }
+    )
+    task.message = (
+        f"完成：成功 {succeeded}，待确认 {pending}，未命中 {missing}，"
+        f"失败 {failed}，跳过 {skipped}"
+    )
 
 
 def make_organizer(ctx: AppContext) -> Organizer:
