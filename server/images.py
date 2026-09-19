@@ -24,8 +24,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from server.config import ImageDownloadConfig
+from server.dmm import hd_cover_urls
 from server.imageinfo import image_size
-from server.models import AggregatedMetadata, MediaMetadata
+from server.models import AggregatedMetadata, ContentType, MediaMetadata
 from server.storage import StorageError
 
 if TYPE_CHECKING:
@@ -74,14 +75,29 @@ def _dedupe(urls: list[str]) -> list[str]:
     return seen
 
 
-def plan_images(metadata: MediaMetadata, config: ImageDownloadConfig, *, stem: str) -> list[ImageTask]:
+def plan_images(
+    metadata: MediaMetadata,
+    config: ImageDownloadConfig,
+    *,
+    stem: str,
+    content_type: ContentType = ContentType.UNKNOWN,
+) -> list[ImageTask]:
     """把元数据里的图片字段编成下载计划。纯函数，便于测试。"""
     tasks: list[ImageTask] = []
 
-    if config.poster and metadata.poster_url:
-        tasks.append(
-            ImageTask("poster", _dedupe([metadata.poster_url]), Path(f"{stem}-poster{IMAGE_SUFFIX}"))
-        )
+    if config.poster:
+        # 有码/无码的番号能直接拼出 DMM 的官方包装图（2184x1468，比源站的 800x538
+        # 大 7 倍像素）。放在候选**最前面**，404 就自动回退到源站海报 ——
+        # 推不出 content id 或 DMM 没有这张图时，行为跟以前完全一样。
+        candidates: list[str] = []
+        if content_type in (ContentType.CENSORED, ContentType.UNCENSORED):
+            candidates.extend(hd_cover_urls(metadata.number))
+        if metadata.poster_url:
+            candidates.append(metadata.poster_url)
+        if candidates:
+            tasks.append(
+                ImageTask("poster", _dedupe(candidates), Path(f"{stem}-poster{IMAGE_SUFFIX}"))
+            )
 
     fanart_candidates = _dedupe(metadata.fanart_urls)
 
@@ -145,7 +161,12 @@ class ImageDownloader:
             report.skipped.append("写入未开启（dry_run 或 organize_enabled=false）")
             return report
 
-        tasks = plan_images(metadata, config, stem=stem or metadata.number or "unknown")
+        tasks = plan_images(
+            metadata,
+            config,
+            stem=stem or metadata.number or "unknown",
+            content_type=aggregated.content_type,
+        )
         if not tasks:
             report.skipped.append("没有要下载的图片（全部关闭或源没给图）")
             return report

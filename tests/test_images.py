@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from server.config import ImageDownloadConfig, RuntimeConfig
+from server.dmm import hd_cover_urls
 from server.images import ImageDownloader, plan_images
 from server.models import AggregatedMetadata, ContentType, MediaMetadata
 from server.sources.http import HttpError
@@ -34,6 +37,86 @@ def test_default_only_downloads_poster():
     """默认只下海报：背景图与剧照都要用户自己决定。"""
     tasks = plan_images(_metadata(), ImageDownloadConfig(), stem="MIDV-123")
     assert [t.kind for t in tasks] == ["poster"]
+
+
+# ---------------------------------------------------------------- DMM 官方包装图
+
+
+def _dmm_url(number: str) -> str:
+    return hd_cover_urls(number)[0]
+
+
+def test_hd_cover_is_the_first_poster_candidate():
+    r"""候选顺序很关键：DMM 官方图放**最前面**，源站海报垫底。
+
+    DMM 的 `pl.jpg` 是 2184x1468，源站（javdb）是 800x538；两者都在候选里，
+    前一张失败就自动换下一张 —— 所以推不出 content id 或 DMM 没有这张图时，
+    行为跟以前完全一样。
+    """
+    tasks = plan_images(
+        _metadata(), ImageDownloadConfig(), stem="MIDV-123", content_type=ContentType.CENSORED
+    )
+    assert tasks[0].kind == "poster"
+    assert tasks[0].candidates == [_dmm_url("MIDV-123"), "https://img.test/poster.jpg"]
+
+
+@pytest.mark.parametrize("content_type", [ContentType.CENSORED, ContentType.UNCENSORED])
+def test_hd_cover_applies_to_censored_and_uncensored(content_type):
+    """无码往往是同番号的流出，DMM 那张（有码版）包装图仍然是同一部作品。"""
+    tasks = plan_images(
+        _metadata(), ImageDownloadConfig(), stem="X", content_type=content_type
+    )
+    assert any("awsimgsrc" in url for url in tasks[0].candidates)
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [ContentType.JANIME, ContentType.FC2, ContentType.AMATEUR, ContentType.WESTERN, ContentType.UNKNOWN],
+)
+def test_hd_cover_not_offered_for_other_types(content_type):
+    """里番没有番号、FC2/素人的 id 空间不是这一套 —— 不要白跑一趟。"""
+    tasks = plan_images(_metadata(), ImageDownloadConfig(), stem="X", content_type=content_type)
+    assert tasks[0].candidates == ["https://img.test/poster.jpg"]
+
+
+async def test_hd_cover_wins_when_it_exists(tmp_path):
+    http = _FakeHttp(
+        {
+            _dmm_url("MIDV-123"): _jpeg(2184, 1468),
+            "https://img.test/poster.jpg": _jpeg(800, 538),
+        }
+    )
+    ctx = _ctx(tmp_path, http)
+    metadata_dir = tmp_path / "media" / "meta"
+
+    await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
+        metadata_dir=metadata_dir,
+    )
+    assert (metadata_dir / "MIDV-123-poster.jpg").read_bytes() == _jpeg(2184, 1468)
+    assert http.calls == [_dmm_url("MIDV-123")]
+
+
+async def test_hd_cover_404_falls_back_to_the_source_poster(tmp_path):
+    """DMM 没有这张图（硬 404）时，老老实实用源站那张。"""
+    http = _FakeHttp(
+        {
+            _dmm_url("MIDV-123"): HttpError("404"),
+            "https://img.test/poster.jpg": _jpeg(800, 538),
+        }
+    )
+    ctx = _ctx(tmp_path, http)
+    metadata_dir = tmp_path / "media" / "meta"
+
+    report = await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
+        metadata_dir=metadata_dir,
+    )
+    assert (metadata_dir / "MIDV-123-poster.jpg").read_bytes() == _jpeg(800, 538)
+    assert http.calls == [_dmm_url("MIDV-123"), "https://img.test/poster.jpg"]
+    assert report.failed == []
 
 
 def test_config_from_a_previous_version_still_loads():
