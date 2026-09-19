@@ -20,6 +20,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from server.episode import normalize_markers
+
 VIDEO_EXT = re.compile(r"\.(mp4|mkv|avi|wmv|mov|flv|rmvb|ts|m2ts|webm|m4v|iso)$", re.I)
 
 # 语言/字幕后缀，出现在扩展名之前
@@ -47,7 +49,7 @@ SUBTITLE_WRAPPERS = tuple(
 
 # 集数标记：命中即**从这里截断**，后续都是副标题
 EPISODE_CUT = re.compile(
-    r"第\s*[\d一二三四五六七八九十百]+\s*[話话集回章弾幕巻卷]"
+    r"第\s*[\d一二三四五六七八九十百〇零]+\s*[話话集回章弾幕巻卷]"
     r"|[＃#♯]\s*\d+"
     r"|\bVol\.?\s*\d+"
     r"|其[のノ之乃]\s*[\d一二三四五六七八九十]"
@@ -72,8 +74,15 @@ def clean_query_name(filename: str) -> str:
     for pattern in SUBTITLE_WRAPPERS:
         text = pattern.sub(" ", text)
 
-    # 集数标记之后的内容（副标题）全部丢掉
-    matched = EPISODE_CUT.search(text)
+    # 集数标记之后的内容（副标题）全部丢掉。
+    #
+    # 匹配在**归一化后**的文本上做，截断却落在**原文**上 —— 因为 `normalize_markers`
+    # 是逐字符 1:1 映射（`str.translate`），下标两边通用。
+    # 这样做有两个好处：
+    # 1. `其の弍` 与 `其の二` 行为一致（之前只有后者会被截断）；
+    # 2. 标题里恰好含「参」「陸」这类异体字时**不会被改写**，只用来定位。
+    #    如果直接对原文做整篇归一化，`参上！` 会变成 `三上！`，查询词就废了。
+    matched = EPISODE_CUT.search(normalize_markers(text))
     if matched:
         text = text[: matched.start()]
 

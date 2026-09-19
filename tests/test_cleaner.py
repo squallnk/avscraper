@@ -40,15 +40,72 @@ from server.cleaner import clean_query_name
             "[251128][魔人]危険な森 おにごっこ 第二話 「早くお家に帰らなくちゃ」.chs.mp4",
             "危険な森 おにごっこ",
         ),
-        # 「其の弍」不在截断规则里 —— 保留原样（实测这个形态在 getchu 能搜到）
+        # 异体字「其の弍」与「其の二」必须同结果（见下面的一致性用例）
         (
             "[251128][Queen Bee]好色の忠義くノ一ぼたん 其の弍[田辺京].chs.mp4",
-            "好色の忠義くノ一ぼたん 其の弍",
+            "好色の忠義くノ一ぼたん",
         ),
     ],
 )
 def test_cleans_real_filenames(filename, expected):
     assert clean_query_name(filename) == expected
+
+
+@pytest.mark.parametrize(
+    "marker",
+    ["其の二", "其の弍", "其の弐", "其の貳", "其ノ弐", "其の２", "其の3"],
+)
+def test_variant_episode_markers_collapse_to_one_query(marker):
+    """同一个语义、不同写法，查询词必须完全一样。
+
+    「其の二」被截断而「其の弍」不被截断，会让同一部作品的两个文件
+    产出两个不同的查询词 —— 一个能搜到，一个搜不到。
+    """
+    name = f"[251128][Queen Bee]好色の忠義くノ一ぼたん {marker}[田辺京].chs.mp4"
+    assert clean_query_name(name) == "好色の忠義くノ一ぼたん"
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        # 异体字只在"标记位置"参与匹配，标题本身一个字都不能改
+        ("[251128][魔人]参上！勇者 第1話.chs.mp4", "参上！勇者"),
+        ("[251128][魔人]漆黒の陸 前編.chs.mp4", "漆黒の陸"),
+        ("[251128][魔人]拾われた少女 第2巻.chs.mp4", "拾われた少女"),
+    ],
+)
+def test_variant_characters_in_titles_are_not_rewritten(filename, expected):
+    """归一化只用来**定位**标记，不能改写标题。
+
+    整篇归一化会把「参上！」变成「三上！」「漆黒の陸」变成「漆黒の六」——
+    查询词直接废掉，而且是静默的。
+    """
+    assert clean_query_name(filename) == expected
+
+
+@pytest.mark.parametrize(
+    ("filename", "episode"),
+    [
+        ("[251128][Group]作品名 其の二[作者].chs.mp4", 2),
+        ("[251128][Group]作品名 其の弍[作者].chs.mp4", 2),
+        ("[251128][Group]作品名 其ノ弐[作者].chs.mp4", 2),
+        ("[251128][Group]作品名 第2巻.chs.mp4", 2),
+        ("[251128][Group]作品名 前編.chs.mp4", 1),
+    ],
+)
+def test_cleaner_and_episode_parser_agree(filename, episode):
+    """两个模块必须对同一批标记给出**互补**的结果：
+
+    清洗器把标记剪掉 → 查询词是干净的作品名；
+    解析器把同一个标记读成数字 → 集号。
+    两边只要有一边不认，就会出现"查询词里留着标记"或"集号丢了"。
+    """
+    from server.episode import parse_episode
+
+    cleaned = clean_query_name(filename)
+    assert cleaned == "作品名", f"查询词没剪干净: {cleaned!r}"
+    info = parse_episode(filename)
+    assert info.episode == episode, f"集号解析错: {info}"
 
 
 @pytest.mark.parametrize("lang", [".chs", ".cht", ".jpn", ".eng", ".sc"])
