@@ -38,6 +38,9 @@
 - [x] **CloudDrive2 webhook**（虚拟路径映射、防抖、幂等、只扫子树）
 - [x] **五个源全部用真实页面固件验证**（getchu / javbus / javdb / freejavbt / bangumi）
 - [x] **bangumi 源**（里番第一源；公开 API 免代理免 Cookie；**用旧版 `/search/subject` 而不是新版 `/v0/search/subjects`** —— 新版是语义模糊排序，同一部作品两种接口拿到的第一条实测不一样，旧版 8/8 全对）
+- [x] **bangumi 用 `responseGroup=large`**（small 会把 `summary`/`air_date` 剥成空串；large 才带简介、发售日、评分。实测 large **不改变结果顺序**：同一关键词两版响应的 id 序列逐位相同）
+- [x] **bangumi 的详情接口对 NSFW 条目返回 404** —— 实测 536363（普通番剧）200，584818 / 421743（里番）404，`/v0/subjects/{id}` 同样 404。也就是旧版详情恰好在最需要它的时候不返回，所以简介只能走搜索接口拿。该详情响应里也**没有 `tags` 和 `infobox`**，厂牌/中文别名别指望它
+- [x] **评分量纲统一到 10 分制**（javdb 是 5 分制：固件里星星固定 5 颗、评论表单是 `video_review[score]` 的 1~5 单选，页面写「4.11分」→ 换算成 8.22。Emby 的 `<rating>` 是 10 分制，不换算的话好评片会显示成 4.1/10。bangumi 本身就是 10 分制，不换算）
 - [x] NFO 生成（movie / tvshow / episode）
 - [x] **图片下载**（海报/缩略图/背景图/剧照各自可关；剧照默认关闭并可限张数；候选 URL 逐个回退）
 - [x] **里番季集解析**（第N話/其の弍/前編/＃N/Vol.N/SxxEyy + 汉字数字 + 分集兜底）

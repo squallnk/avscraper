@@ -121,10 +121,15 @@ def test_javdb_parses_real_detail_page(javdb_detail_html):
     assert len(meta.tags) >= 4
 
 
-def test_javdb_score_comes_from_the_info_panel(javdb_detail_html):
-    """评分在「評分」面板格里，不是 `.score` 选择器 —— 后者在本站不存在。"""
+def test_javdb_score_is_converted_to_ten_point_scale(javdb_detail_html):
+    """评分在「評分」面板格里，不是 `.score` 选择器 —— 后者在本站不存在。
+
+    而且它是 **5 分制**：同一份固件里，星星固定 5 颗，评论表单是
+    `video_review[score]` 的 1~5 单选（很差~極好）。页面写「4.11分」。
+    Emby 的 `<rating>` 是 10 分制，所以必须换算 —— 否则一部 4.11/5 的好评片
+    在 Emby 里显示成 4.1/10，看着像烂片。"""
     meta = javdb_detail(javdb_detail_html, "MIDV-123")
-    assert meta.score == pytest.approx(4.11)
+    assert meta.score == pytest.approx(8.22)
 
 
 def test_javdb_prefers_female_actors(javdb_detail_html):

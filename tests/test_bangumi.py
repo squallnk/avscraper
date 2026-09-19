@@ -115,6 +115,61 @@ def test_summary_and_air_date_are_taken_from_the_search_item():
     assert meta.year == 2025
 
 
+@pytest.mark.parametrize(
+    ("small", "large"),
+    [
+        ("bgm_onabarukai.json", "bgm_search_large_onabarukai.json"),
+        ("bgm_dS.json", "bgm_search_large_dS.json"),
+    ],
+)
+def test_large_response_keeps_result_order(small, large):
+    """换成 responseGroup=large 不能改变结果顺序 —— 这条必须实测，不能假设。
+
+    新版搜索接口就是栽在排序上的（语义模糊排序把无关作品排到第一位）。
+    small / large 是同一关键词的两份真实响应，id 序列必须逐位相同。
+    """
+    a = json.loads(load_fixture(small))
+    b = json.loads(load_fixture(large))
+    assert a["results"] == b["results"]
+    assert [i["id"] for i in a["list"]] == [i["id"] for i in b["list"]]
+
+
+def test_large_fills_the_fields_that_small_strips():
+    """small 把 summary / air_date 剥成空串，large 才有值，rating 更是只有 large 有。"""
+    small = json.loads(load_fixture("bgm_onabarukai.json"))["list"][0]
+    large = json.loads(load_fixture("bgm_search_large_onabarukai.json"))["list"][0]
+    assert small["summary"] == "" and small["air_date"] == ""
+    assert large["summary"] and large["air_date"] == "2025-11-14"
+    assert "rating" not in small and "rating" in large
+
+
+@pytest.mark.parametrize(
+    ("fixture", "title", "release_date", "score"),
+    [
+        ("bgm_search_large_onabarukai.json", "狩猎雌性的村庄", "2025-11-14", 3.8),
+        ("bgm_search_large_dS.json", "抖S的宠物", "2025-11-28", 4.4),
+    ],
+)
+def test_large_fixture_fields_are_mapped(fixture, title, release_date, score):
+    meta = _parse(fixture, "任意关键词")
+    assert meta is not None
+    assert meta.title == title
+    assert meta.release_date == release_date
+    assert meta.year == int(release_date[:4])
+    assert meta.plot
+    assert meta.score == pytest.approx(score)
+
+
+def test_bangumi_score_is_already_a_ten_point_scale():
+    """Bangumi 本身是 1~10 分制，与 javdb 换算后（×2）同量纲，可直接写 <rating>。
+
+    所以这里**不乘 2** —— 乘了就变成 7.6，反而错了。
+    """
+    meta = _parse("bgm_search_large_onabarukai.json", "牝を狩る村")
+    assert meta is not None
+    assert meta.score == pytest.approx(3.8)
+
+
 def test_missing_summary_and_air_date_stay_empty():
     """small 响应里这两个字段是空串 —— 不能变成 `""` 塞进元数据。
 

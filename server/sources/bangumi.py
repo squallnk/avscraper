@@ -44,7 +44,11 @@ from server.models import ContentType, MediaMetadata, SourceDescriptor
 from server.sources.base import FetchContext, SourceError, SourcePlugin
 
 BASE = "https://api.bgm.tv"
-LEGACY_SEARCH = BASE + "/search/subject/{keyword}?type=2&responseGroup=small"
+# responseGroup 必须用 large：
+# - small 会把 summary / air_date 剥成空串（实测同一个条目 small 是空、large 有值）
+# - 而详情接口对 NSFW 条目返回 404（见模块文档），所以简介只能从搜索这里拿
+# - 实测 large 不改变结果顺序：同一关键词 small/large 两版的 id 序列完全一致
+LEGACY_SEARCH = BASE + "/search/subject/{keyword}?type=2&responseGroup=large"
 
 # Bangumi 会拦默认 UA，必须带一个标明用途的标识
 API_USER_AGENT = "avscraper/0.1 (https://github.com/squallnk/avscraper)"
@@ -104,6 +108,8 @@ def parse_search(payload: str, query: str) -> MediaMetadata | None:
     # 所以这里按"有就用、没有就算了"处理，不额外发请求。
     summary = (item.get("summary") or "").strip()
     air_date = (item.get("air_date") or "").strip()
+    # Bangumi 本来就是 10 分制，与 javdb 换算后一致，也与 Emby 的 <rating> 一致
+    rating = (item.get("rating") or {}).get("score")
 
     images = item.get("images") or {}
     poster = None
@@ -121,6 +127,7 @@ def parse_search(payload: str, query: str) -> MediaMetadata | None:
         plot=summary or None,
         release_date=air_date or None,
         year=int(air_date[:4]) if air_date[:4].isdigit() else None,
+        score=float(rating) if isinstance(rating, (int, float)) and rating else None,
         website=item.get("url") or (f"https://bgm.tv/subject/{item['id']}" if item.get("id") else None),
     )
 

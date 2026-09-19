@@ -52,10 +52,20 @@ def _runtime_minutes(text: str) -> int | None:
     return int(matched.group(1)) if matched else None
 
 
+# javdb 的评分是 5 分制：详情页的「評分」星星固定 5 颗，
+# 而且评论表单里就是 `video_review[score]` 的 1~5 五个单选（很差~極好）。
+# Emby 的 `<rating>` 是 10 分制，直接写 4.11 会被显示成 4.1/10 —— 一部好评片看着像烂片。
+# 所以这里统一换算到 10 分制，跟 bangumi（本身就是 10 分制）对齐。
+JAVDB_SCORE_MAX = 5.0
+EMBY_SCORE_MAX = 10.0
+
+
 def _score_value(text: str) -> float | None:
-    """評分格子的文案形如「4.11分, 由129人評價」。"""
+    """評分格子的文案形如「4.11分, 由129人評價」，返回 10 分制。"""
     matched = re.search(r"(\d+(?:\.\d+)?)\s*分", text)
-    return float(matched.group(1)) if matched else None
+    if not matched:
+        return None
+    return round(float(matched.group(1)) * EMBY_SCORE_MAX / JAVDB_SCORE_MAX, 2)
 
 
 def parse_detail(html: str, number: str) -> MediaMetadata:
