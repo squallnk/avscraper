@@ -187,6 +187,53 @@ def test_referer_of_list_fields_takes_the_first_known_source():
     assert ImageDownloader(ctx)._referer_for(aggregated, "不存在的字段") is None
 
 
+def test_poster_keeps_fallbacks_from_other_sources():
+    r"""海报只有一张候选太脆：一次网络抖动、或者站点换过图导致原地址失效，
+    整个文件就没有封面 —— 实跑遇到过一次（图本身是好的，那次下载失败了）。
+
+    所以把其它源给的海报垫在后面。
+    """
+    tasks = plan_images(
+        _metadata(),
+        ImageDownloadConfig(),
+        stem="MIDV-123",
+        poster_fallbacks=["https://other.test/cover.jpg"],
+    )
+    assert tasks[0].kind == "poster"
+    assert tasks[0].candidates == [
+        "https://img.test/poster.jpg",
+        "https://other.test/cover.jpg",
+    ]
+
+
+async def test_poster_falls_back_to_another_source(tmp_path):
+    """主海报下不下来时，用别的源那张 —— 而不是干脆没有封面。"""
+    from server.models import SourceResult
+
+    http = _FakeHttp({"https://backup.test/cover.jpg": _jpeg(566, 800)})
+    ctx = _ctx(tmp_path, http)
+    metadata_dir = tmp_path / "media" / "meta"
+
+    await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(),
+        aggregated=AggregatedMetadata(
+            number="MIDV-123",
+            content_type=ContentType.CENSORED,
+            sources=[
+                SourceResult(source="javbus", ok=True, metadata=_metadata()),
+                # 另一个源给的海报，作为退路
+                SourceResult(
+                    source="javdb",
+                    ok=True,
+                    metadata=MediaMetadata(number="MIDV-123", poster_url="https://backup.test/cover.jpg"),
+                ),
+            ],
+        ),
+        metadata_dir=metadata_dir,
+    )
+    assert (metadata_dir / "MIDV-123-poster.jpg").read_bytes() == _jpeg(566, 800)
+
+
 def test_config_from_a_previous_version_still_loads():
     r"""去掉 ``thumb`` 是一次**单向下线**：库里存的配置 JSON 还带着这个键。
 

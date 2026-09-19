@@ -23,6 +23,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 from server.config import ImageDownloadConfig
 from server.dmm import hd_cover_urls
 from server.imageinfo import image_size
@@ -89,6 +92,7 @@ def plan_images(
     *,
     stem: str,
     content_type: ContentType = ContentType.UNKNOWN,
+    poster_fallbacks: Sequence[str] = (),
 ) -> list[ImageTask]:
     """把元数据里的图片字段编成下载计划。纯函数，便于测试。"""
     tasks: list[ImageTask] = []
@@ -102,6 +106,10 @@ def plan_images(
             candidates.extend(hd_cover_urls(metadata.number))
         if metadata.poster_url:
             candidates.append(metadata.poster_url)
+        # 其它源给的海报垫在后面。**必须留退路**：海报只有一张候选时，
+        # 一次网络抖动或者一个失效的图片地址，就整个文件没有封面 ——
+        # 实跑遇到过一次（bangumi 那张图本身是好的，但那次下载失败了）。
+        candidates.extend(poster_fallbacks)
         if candidates:
             tasks.append(
                 ImageTask("poster", _dedupe(candidates), Path(f"{stem}-poster{IMAGE_SUFFIX}"))
@@ -174,6 +182,7 @@ class ImageDownloader:
             config,
             stem=stem or metadata.number or "unknown",
             content_type=aggregated.content_type,
+            poster_fallbacks=self._poster_fallbacks(aggregated, metadata),
         )
         if not tasks:
             report.skipped.append("没有要下载的图片（全部关闭或源没给图）")
@@ -193,6 +202,22 @@ class ImageDownloader:
 
         await asyncio.gather(*(one(task) for task in tasks), return_exceptions=True)
         return report
+
+    def _poster_fallbacks(self, aggregated: AggregatedMetadata, metadata: MediaMetadata) -> list[str]:
+        """其它源给的海报，按路由顺序去重。
+
+        海报是 Emby 列表里的封面，**没有它条目就没有脸** —— 所以宁可多留几张候选：
+        当前那张偶尔下不下来（网络抖动），或者站点换过图导致原地址失效，
+        有退路就不会整条没有封面。
+        """
+        seen = {metadata.poster_url}
+        fallbacks: list[str] = []
+        for result in aggregated.sources:
+            url = result.metadata.poster_url if result.metadata else None
+            if url and url not in seen:
+                seen.add(url)
+                fallbacks.append(url)
+        return fallbacks
 
     def _referer_for_url(
         self, url: str, aggregated: AggregatedMetadata, field_name: str
