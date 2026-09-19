@@ -13,11 +13,23 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from server.cleaner import ANIMATION_MARKERS
 from server.episode import parse_episode
 from server.models import MediaMetadata
 
 # 归一化时丢掉的分隔符／装饰字符
-_NOISE = re.compile(r"[\s\-–—_·・、。，,.!！?？「」『』（）()【】\[\]＃#〜～:：;；'\"]+")
+_NOISE = re.compile(r"[\s\-–—_·。，,.!！?？「」『』（）()【】\[\]＃#〜～:：;；'\"]+")
+
+# 清洗查询词时会剥掉的"发布形态"标记（OVA / THE ANIMATION…）。
+# **比对前两边都要剥掉**，否则会误判成不匹配：
+#   文件  [251031][ショーテン]Hな義姉シリーズ The Animation 1 弟の性欲処理は、…
+#   查询词（已剥）Hな義姉シリーズ 1 弟の性欲処理は、…
+#   抓回标题（站点的，没剥）Hな義姉シリーズ The Animation 1 弟の性欲処理は、…
+# 查询词不是标题的子串（中间多了 "The Animation"）-> 判成"对不上" -> 白等人工确认。
+# 实测就是这么误报的。
+_MARKER_STRIP = tuple(
+    re.compile(pattern.pattern, re.I) for pattern in ANIMATION_MARKERS
+)
 
 # 命中判定用的最小长度：太短的查询（如"序"）容易误判为匹配
 MIN_QUERY_LENGTH = 3
@@ -27,6 +39,8 @@ def normalize_for_match(text: str | None) -> str:
     if not text:
         return ""
     value = unicodedata.normalize("NFKC", text)
+    for pattern in _MARKER_STRIP:
+        value = pattern.sub(" ", value)
     return _NOISE.sub("", value).lower()
 
 

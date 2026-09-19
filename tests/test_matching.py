@@ -91,6 +91,29 @@ def test_episode_conflict_survives_the_query_check():
     assert episode_conflicts(1, metadata) == 2
 
 
+def test_release_markers_are_ignored_on_both_sides():
+    r"""比对前两边都要剥掉 ``OVA`` / ``THE ANIMATION`` 这类"发布形态"标记。
+
+    清洗查询词时本来就会剥（这是为了搜索命中），但**比对时只剥了一边** ——
+    站点标题里还留着 ``The Animation``，于是查询词不是它的子串，判成"对不上"，
+    白等人工确认。实测就是这么误报的：
+
+        文件      [251031][ショーテン]Hな義姉シリーズ The Animation 1 弟の性欲処理は、…
+        查询词     Hな義姉シリーズ 1 弟の性欲処理は、…
+        抓回标题   Hな義姉シリーズ The Animation 1 弟の性欲処理は、…
+    """
+    query = "Hな義姉シリーズ 1 弟の性欲処理は、姉がするものだと お義姉ちゃんは思っている。"
+    title = "Hな義姉シリーズ The Animation 1 弟の性欲処理は、姉がするものだと お義姉ちゃんは思っている。"
+    assert query_matches_metadata(query, MediaMetadata(title=title)) is True
+
+
+def test_marker_stripping_does_not_make_everything_match():
+    """剥标记归剥标记，不能变成"什么都算匹配"。"""
+    assert query_matches_metadata(
+        "聖痕のアリア", MediaMetadata(title="まったく別の OVA 作品")
+    ) is False
+
+
 def test_need_selection_status_exists():
     """错配要有专门的状态，不能混在 not_found 或 success 里。"""
     from server.models import ScrapeStatus

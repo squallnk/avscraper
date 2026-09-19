@@ -168,8 +168,21 @@ def has_results(html: str) -> bool:
     return bool(soup.select("ul.display li"))
 
 
-def parse_search(html: str) -> list[str]:
-    r"""从搜索结果页取商品 id：**动画优先**，其余按出现顺序排在后面。
+def parse_search(html: str, keyword: str = "") -> list[str]:
+    r"""从搜索结果页取商品 id，按"该先试哪一个"排序：
+
+    1. 标题里含关键词 **且** 是动画
+    2. 标题里含关键词
+    3. 是动画
+    4. 其余，按出现顺序
+
+    只在结果列表 `ul.display` 里取，不扫全页 —— 避免把推荐位/导航当成结果。
+
+    **为什么还要关键词优先**：getchu 的搜索是模糊的，会把沾边的也排进来。
+    实测搜「夏妻」时第一条动画是**另一部作品**「妻みぐい3 THE ANIMATION ゴールドディスク」——
+    跟"牝を狩る村 匹配到无关真人片"是同一类错配，只是发生在 getchu 上。
+    光按动画优先挡不住它。（`query_matches_metadata` 能兜底，但那是**事后**拦截，
+    会白白变成"待人工确认"，而不是直接找对。）
 
     只在结果列表 `ul.display` 里取，不扫全页 —— 避免把推荐位/导航当成结果。
 
@@ -185,8 +198,8 @@ def parse_search(html: str) -> list[str]:
     所以按结果项里的 `<span class="orangeb">[アニメ・アダルト]</span>` 标签挑。
     """
     soup = soup_of(html)
-    anime: list[str] = []
-    others: list[str] = []
+    needle = re.sub(r"\s+", "", keyword)
+    buckets: dict[int, list[str]] = {0: [], 1: [], 2: [], 3: []}
     seen: set[str] = set()
     for item in soup.select("ul.display li"):
         anchor = item.select_one("a[href*='soft.phtml?id=']")
@@ -200,12 +213,20 @@ def parse_search(html: str) -> list[str]:
         if product_id in seen:
             continue
         seen.add(product_id)
+
+        # 用整个结果项的文本：第一个 a[href] 其实是包裹封面图的空链接，
+        # 标题在后面的 a.blueb 里。整项取文本更省事，也不会漏。
+        title_text = re.sub(r"\s+", "", item.get_text(" ", strip=True))
+        hit = bool(needle) and needle in title_text
         label = item.select_one("span.orangeb")
-        if label is not None and "アニメ" in label.get_text():
-            anime.append(product_id)
-        else:
-            others.append(product_id)
-    return anime + others
+        is_anime = label is not None and "アニメ" in label.get_text()
+        rank = 0 if (hit and is_anime) else 1 if hit else 2 if is_anime else 3
+        buckets[rank].append(product_id)
+
+    ordered: list[str] = []
+    for rank in sorted(buckets):
+        ordered.extend(buckets[rank])
+    return ordered
 
 
 def _has_image(soup: BeautifulSoup, url: str) -> bool:
@@ -289,7 +310,7 @@ class GetchuSource(SourcePlugin):
         if not has_results(html):
             return None
 
-        ids = parse_search(html)
+        ids = parse_search(html, keyword)
         if not ids:
             return None
         return await self._by_id(client, ids[0])

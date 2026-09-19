@@ -237,6 +237,22 @@ def test_search_prefers_the_anime_product_over_comic_and_goods():
     assert ids.index("1326924") < ids.index("1294736")
 
 
+def test_search_prefers_the_entry_whose_title_contains_the_keyword():
+    r"""光"动画优先"挡不住模糊搜索 —— 还得看标题里有没有关键词。
+
+    实测搜「夏妻」时第一条动画是**另一部作品**「妻みぐい3 THE ANIMATION ゴールドディスク」。
+    跟"牝を狩る村 匹配到无关真人片"是同一类错配，只是发生在 getchu 上。
+
+    这里用「朝まで汁だく母娘丼」那份真实响应演示：
+    关键词指到漫画时，漫画就该排在动画前面（说明是**按关键词**排的，不是无脑动画优先）。
+    """
+    html = _fixture("gc_euc_3.html")
+    assert parse_search(html, "MUJINコミックス")[0] == "1294736"   # 漫画
+    assert parse_search(html, "後編")[0] == "1326924"             # 动画 後編
+    # 关键词谁都对不上时，退回"动画优先"
+    assert parse_search(html, "不存在的关键词")[0] == "1326924"
+
+
 def test_search_with_only_one_anime_hit():
     """「彼女がセパレートをまとう理由」只有一条命中，就是动画本身。"""
     assert parse_search(_fixture("gc_euc_5.html")) == ["1341337"]
