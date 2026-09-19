@@ -81,6 +81,21 @@ def test_parse_product_real_page(product_html):
     assert meta.website == "https://www.getchu.com/soft.phtml?id=877668"
 
 
+def test_parse_product_collects_sample_images(product_html):
+    r"""「サンプル画像」要取**原图**，不是 `_s` 缩略图。
+
+    这是里番唯一能拿到真剧照的地方：javdb / freejavbt 给的"剧照"都是 120x90
+    的缩略图（大图后缀 403），过不了 `fanart_min_width`，最后只能拿封面兜底 ——
+    结果 `-fanart.jpg` 和 `-poster.jpg` 是同一张图。getchu 这边是真正的 CG。
+    """
+    meta = parse_product(product_html, "877668")
+    assert len(meta.fanart_urls) >= 5
+    assert all(url.startswith("https://www.getchu.com/brandnew/877668/") for url in meta.fanart_urls)
+    # _s 那张只有 200px 宽，当背景图会被拉伸糊掉
+    assert not [url for url in meta.fanart_urls if url.endswith("_s.jpg")]
+    assert any(url.endswith("sample1.jpg") for url in meta.fanart_urls)
+
+
 def test_parse_product_strips_trailing_noise(product_html):
     """「（このブランドの作品一覧）」「[一覧]」这类解释性链接不能混进字段值。"""
     meta = parse_product(product_html, "877668")

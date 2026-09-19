@@ -74,6 +74,38 @@ def _spec_pairs(soup: BeautifulSoup) -> dict[str, str]:
     return pairs
 
 
+def _sample_images(soup: BeautifulSoup, product_id: str) -> list[str]:
+    r"""商品页的「サンプル画像」—— 里番唯一能拿到真剧照的地方。
+
+    页面上缩略图是 `c877668sample1_s.jpg`，而外层 `<a href>` 指的是原图
+    `c877668sample1.jpg`。**必须取原图**：`_s` 那张只有 200px 宽，当背景图会被拉伸糊掉。
+
+    为什么在意：javdb / freejavbt 给的"剧照"其实都是 120x90 的缩略图
+    （大图那个后缀 403），过不了 `fanart_min_width`，最后只能拿封面兜底 ——
+    结果 `-fanart.jpg` 和 `-poster.jpg` 是同一张图。getchu 这边是真正的 CG。
+    """
+    urls: list[str] = []
+    for link in soup.select(".item-Samplecard a[href]"):
+        href = str(link.get("href") or "").strip()
+        if not href:
+            continue
+        if href.startswith("/"):
+            href = BASE + href
+        if href.startswith(("http://", "https://")) and href not in urls:
+            urls.append(href)
+    if urls:
+        return urls
+
+    # 兜底：有些页面没有 item-Samplecard 结构，但正文脚本里直接列了原图地址
+    pattern = re.compile(
+        re.escape(f"{BASE}/brandnew/{product_id}/") + r"\w+sample\d+\.jpg"
+    )
+    for found in pattern.findall(str(soup)):
+        if found not in urls:
+            urls.append(found)
+    return urls
+
+
 def parse_product(html: str, product_id: str) -> MediaMetadata:
     """解析商品详情页。纯函数，配合 `tests/fixtures/getchu_*.html` 做回归。"""
     soup = soup_of(html)
@@ -118,6 +150,7 @@ def parse_product(html: str, product_id: str) -> MediaMetadata:
         year=year,
         website=f"{BASE}/soft.phtml?id={product_id}",
         poster_url=cover or None,
+        fanart_urls=_sample_images(soup, product_id),
     )
 
 

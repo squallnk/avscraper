@@ -134,7 +134,10 @@ def parse_search(payload: str, query: str) -> MediaMetadata | None:
         release_date=air_date or None,
         year=int(air_date[:4]) if air_date[:4].isdigit() else None,
         score=float(rating) if isinstance(rating, (int, float)) and rating else None,
-        website=item.get("url") or (f"https://bgm.tv/subject/{item['id']}" if item.get("id") else None),
+        # 旧版接口给的详情页地址也是 http —— 跟图片一样要升到 https，
+        # 否则 NFO 里的 <website> 是明文 http 链接。
+        website=_https(item.get("url"))
+        or (f"https://bgm.tv/subject/{item['id']}" if item.get("id") else None),
     )
 
 

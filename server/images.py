@@ -44,6 +44,13 @@ class ImageTask:
     kind: str
     candidates: list[str]
     relative_path: Path
+    min_width_exempt: tuple[str, ...] = ()
+    """这些候选不做 `fanart_min_width` 检查。
+
+    只用于"封面兜底当背景图"：那个宽度检查是为了挡掉站点的 120x90 缩略图，
+    但封面是我们自己挑中的代表图 —— 把它也挡掉，结果是同一批文件里有几张
+    有背景图、有几张没有，而原因完全看不出来。
+    """
 
 
 @dataclass
@@ -92,7 +99,12 @@ def plan_images(metadata: MediaMetadata, config: ImageDownloadConfig, *, stem: s
             fanart_urls.append(metadata.poster_url)
         if fanart_urls:
             tasks.append(
-                ImageTask("fanart", _dedupe(fanart_urls), Path(f"{stem}-fanart{IMAGE_SUFFIX}"))
+                ImageTask(
+                    "fanart",
+                    _dedupe(fanart_urls),
+                    Path(f"{stem}-fanart{IMAGE_SUFFIX}"),
+                    min_width_exempt=(metadata.poster_url,) if metadata.poster_url else (),
+                )
             )
 
     if config.extrafanart and fanart_candidates:
@@ -196,7 +208,11 @@ class ImageDownloader:
             if not data:
                 continue
 
-            if task.kind == "fanart" and config.fanart_min_width > 0:
+            if (
+                task.kind == "fanart"
+                and config.fanart_min_width > 0
+                and url not in task.min_width_exempt
+            ):
                 size = image_size(data)
                 if size is not None and size[0] < config.fanart_min_width:
                     too_small.append(f"{size[0]}x{size[1]}")

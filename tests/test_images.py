@@ -384,6 +384,37 @@ async def test_zero_threshold_disables_the_guard(tmp_path):
     assert (metadata_dir / "MIDV-123-fanart.jpg").exists()
 
 
+async def test_cover_fallback_ignores_the_width_guard(tmp_path):
+    """封面兜底不做宽度检查。
+
+    实跑踩到：同一个目录 10 个文件，8 个有 `-fanart.jpg`、2 个没有 —— 差别只在
+    封面宽度是否刚好过 400px（376x526 那个就被毙了）。"有背景图/没背景图"
+    取决于封面恰好多大，而界面上完全看不出来。
+
+    宽度检查的本意是挡掉站点的 120x90 缩略图，封面是我们自己挑中的代表图，
+    不该被同一条规则毙掉。
+    """
+    http = _FakeHttp(
+        {
+            "https://img.test/sample1.jpg": _jpeg(120, 90),
+            "https://img.test/poster.jpg": _jpeg(376, 526),
+        }
+    )
+    ctx = _ctx(
+        tmp_path,
+        http,
+        images=ImageDownloadConfig(poster=False, thumb=False, fanart=True, fanart_min_width=400),
+    )
+    metadata_dir = tmp_path / "media" / "meta"
+
+    await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(fanart_urls=["https://img.test/sample1.jpg"]),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
+        metadata_dir=metadata_dir,
+    )
+    assert (metadata_dir / "MIDV-123-fanart.jpg").read_bytes() == _jpeg(376, 526)
+
+
 async def test_all_candidates_too_small_is_reported_as_skipped(tmp_path):
     http = _FakeHttp({"https://img.test/sample1.jpg": _jpeg(120, 90)})
     ctx = _ctx(

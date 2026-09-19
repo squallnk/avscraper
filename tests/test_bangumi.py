@@ -62,8 +62,10 @@ def test_poster_upgrades_http_to_https():
 
 
 def test_website_points_at_the_subject():
+    """旧版接口给的详情页地址是 http，要升到 https —— 否则 NFO 里是明文 http 链接。"""
     meta = _parse("bgm_onabarukai.json", "牝を狩る村")
     assert meta.website and "584818" in meta.website
+    assert meta.website.startswith("https://")
 
 
 def test_empty_result_returns_none():
