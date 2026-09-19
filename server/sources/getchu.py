@@ -89,7 +89,9 @@ def _sample_images(soup: BeautifulSoup, product_id: str) -> list[str]:
         href = str(link.get("href") or "").strip()
         if not href:
             continue
-        if href.startswith("/"):
+        if href.startswith("//"):  # 协议相对：页面里两种写法都有
+            href = "https:" + href
+        elif href.startswith("/"):
             href = BASE + href
         if href.startswith(("http://", "https://")) and href not in urls:
             urls.append(href)
@@ -246,11 +248,38 @@ class GetchuSource(SourcePlugin):
         return await self._by_id(client, ids[0])
 
     async def _by_id(self, client: object, product_id: str) -> MediaMetadata | None:
+        r"""按商品 id 取详情页，**先试新地址** `/item/<id>/?gc=gc`。
+
+        那正是站点自己年龄确认页上「【すすむ】」链接指向的地方 —— 直接带参数过去，
+        不用跟着 301 走。
+
+        老地址 `/soft.phtml?id=<id>` 现在会 301 到新地址，而**重定向会丢掉 query**：
+        没有 `gc=gc` 就落到年龄确认页。它之所以还能用，是因为同一个 httpx 客户端里
+        先跑的**搜索**请求带了 `gc=gc`、站点种下了年龄 cookie，后续请求自动带上。
+
+        那是个隐性依赖：第一次搜索要是被限流，详情页会跟着全废 ——
+        而且报出来的是"选择器失效"，查错方向完全不对。所以老地址只留作兜底。
+        """
         get = client.get
-        result = await get(f"{BASE}/soft.phtml?id={product_id}", source=self.descriptor.id)
-        if result.status != 200 or not result.content:
-            return None
-        return parse_product(result.decode(ENCODING), product_id)
+        last_error: SourceError | None = None
+        for url in (
+            f"{BASE}/item/{product_id}/?{AGE_ACK_PARAM}",
+            f"{BASE}/soft.phtml?id={product_id}&{AGE_ACK_PARAM}",
+        ):
+            result = await get(url, source=self.descriptor.id)
+            if result.status != 200 or not result.content:
+                continue
+            html = result.decode(ENCODING)
+            if _looks_like_attestation(html):
+                continue
+            try:
+                return parse_product(html, product_id)
+            except SourceError as exc:
+                last_error = exc
+        if last_error is not None:
+            # 两条路都拿到了页面但都解析不了 —— 这是"站点改版了"，要报出来
+            raise last_error
+        return None
 
 
 PLUGIN = GetchuSource()
