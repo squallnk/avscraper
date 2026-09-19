@@ -169,20 +169,43 @@ def has_results(html: str) -> bool:
 
 
 def parse_search(html: str) -> list[str]:
-    """从搜索结果页取商品 id，按出现顺序。
+    r"""从搜索结果页取商品 id：**动画优先**，其余按出现顺序排在后面。
 
     只在结果列表 `ul.display` 里取，不扫全页 —— 避免把推荐位/导航当成结果。
+
+    **为什么动画必须优先**：同一个关键词下 getchu 混着不同形态的商品，
+    列表是**按发售日**排的，动画不一定排第一。实测两份真实响应：
+
+        朝まで汁だく母娘丼        -> 第一条是「MUJINコミックス」（漫画），
+                                   第二条才是「後編[智沢渚優]」（动画）
+        神聖昂燐ダクリュオン・ルナ   -> 第一条是 CHAOS-R 的亚克力立牌（周边）
+
+    取第一条就会把漫画/周边的元数据写到动画文件上，而且**查询词确实包含在标题里**
+    （"朝まで汁だく母娘丼!! MUJINコミックス"），匹配校验拦不住 —— 又一个静默错配。
+    所以按结果项里的 `<span class="orangeb">[アニメ・アダルト]</span>` 标签挑。
     """
     soup = soup_of(html)
-    ids: list[str] = []
-    for anchor in soup.select("ul.display a[href*='soft.phtml?id=']"):
-        href = anchor.get("href")
+    anime: list[str] = []
+    others: list[str] = []
+    seen: set[str] = set()
+    for item in soup.select("ul.display li"):
+        anchor = item.select_one("a[href*='soft.phtml?id=']")
+        href = anchor.get("href") if anchor is not None else None
         if not isinstance(href, str):
             continue
         matched = re.search(r"soft\.phtml\?id=(\d+)", href)
-        if matched and matched.group(1) not in ids:
-            ids.append(matched.group(1))
-    return ids
+        if matched is None:
+            continue
+        product_id = matched.group(1)
+        if product_id in seen:
+            continue
+        seen.add(product_id)
+        label = item.select_one("span.orangeb")
+        if label is not None and "アニメ" in label.get_text():
+            anime.append(product_id)
+        else:
+            others.append(product_id)
+    return anime + others
 
 
 def _has_image(soup: BeautifulSoup, url: str) -> bool:

@@ -9,6 +9,14 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# **必须串行**。连着推两个提交时两条构建会并行跑，而它们都往 :latest 上推 ——
+# 谁最后结束谁说了算。实测踩过：新构建 35s 结束、旧构建 98s 结束，
+# 结果 latest 被旧的覆盖回去，用户 docker pull 拿到的还是旧镜像，
+# 表现为「我明明拉了却不是最新版」。
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}

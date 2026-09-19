@@ -219,6 +219,29 @@ def test_euc_jp_keyword_search_finds_the_real_products():
     assert parse_search(utf8) == []
 
 
+def test_search_prefers_the_anime_product_over_comic_and_goods():
+    r"""同一个关键词下 getchu 混着漫画、周边、动画，而列表是**按发售日**排的。
+
+    实测「朝まで汁だく母娘丼」的第一条是「MUJINコミックス」（漫画），
+    第二条才是我们要的「後編[智沢渚優]」（动画）；「神聖昂燐ダクリュオン・ルナ」
+    的第一条干脆是亚克力立牌。
+
+    取第一条就会把漫画/周边的元数据写到动画文件上 —— 而且查询词**确实**包含在
+    标题里（"朝まで汁だく母娘丼!! MUJINコミックス"），匹配校验拦不住。
+    所以要按结果项的 [アニメ・アダルト] 标签挑。
+    """
+    ids = parse_search(_fixture("gc_euc_3.html"))
+    # 1326924 = 後編（动画）, 1326727 = 前編（动画）, 1294736 = 漫画, 1347028 = 杂志
+    assert ids[:2] == ["1326924", "1326727"]
+    assert "1294736" in ids and "1347028" in ids  # 没被丢掉，只是排在后面
+    assert ids.index("1326924") < ids.index("1294736")
+
+
+def test_search_with_only_one_anime_hit():
+    """「彼女がセパレートをまとう理由」只有一条命中，就是动画本身。"""
+    assert parse_search(_fixture("gc_euc_5.html")) == ["1341337"]
+
+
 def test_empty_search_page_detected(empty_html):
     """关键词查不到东西时必须报"没有"，否则会把推荐位当成匹配结果。"""
     assert has_results(empty_html) is False
