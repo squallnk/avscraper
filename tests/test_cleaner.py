@@ -40,6 +40,12 @@ from server.cleaner import clean_query_name
             "[251128][魔人]危険な森 おにごっこ 第二話 「早くお家に帰らなくちゃ」.chs.mp4",
             "危険な森 おにごっこ",
         ),
+        # 发行方加的尾巴「を見る」。bgm 上这部作品的正式标题没有它，
+        # 带着它去搜会退化成一堆无关的热门条目（见 test_bangumi.py 里的对照）
+        (
+            "[250704][AnimeFesta]彼女がセパレートをまとう理由を見る.chs.mp4",
+            "彼女がセパレートをまとう理由",
+        ),
         # 异体字「其の弍」与「其の二」必须同结果（见下面的一致性用例）。
         # 截短后的查询词已在 bangumi 实测：results=5，第一条 id 562031
         # 「好色的忠义女忍者牡丹」，即正确条目 —— 不是"大概也能搜到"。
@@ -65,6 +71,20 @@ def test_variant_episode_markers_collapse_to_one_query(marker):
     """
     name = f"[251128][Queen Bee]好色の忠義くノ一ぼたん {marker}[田辺京].chs.mp4"
     assert clean_query_name(name) == "好色の忠義くノ一ぼたん"
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        # 只剪**结尾**的「を見る」；出现在中间时是标题的一部分，一个字都不能动
+        ("[250704][Group]何かを見る話 第1話.chs.mp4", "何かを見る話"),
+        ("[250704][Group]何かを見る話.chs.mp4", "何かを見る話"),
+        # 结尾变体
+        ("[250704][Group]作品名をみる.chs.mp4", "作品名"),
+    ],
+)
+def test_promo_suffix_only_stripped_at_the_end(filename, expected):
+    assert clean_query_name(filename) == expected
 
 
 @pytest.mark.parametrize(

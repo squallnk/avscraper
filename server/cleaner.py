@@ -47,6 +47,23 @@ SUBTITLE_WRAPPERS = tuple(
     re.compile(p) for p in (r"～[^～]{2,}～", r"〜[^〜]{2,}〜", r"「[^」]+」", r"『[^』]+』")
 )
 
+# 发行方在作品名后面加的宣传尾巴。
+#
+# 实测（三份真实响应）：
+#   文件名  [250704][AnimeFesta]彼女がセパレートをまとう理由を見る
+#   带尾巴搜  -> results=15，第一条「劇場版 魔法少女まどか☆マギカ [新編] 叛逆の物語」（完全无关）
+#   去掉尾巴  -> results=26，第一条 id 568230「彼女がセパレートをまとう理由」，
+#                中文名「女友穿上两截式的原因」，air_date 2025-07-04 —— 与文件名里的
+#                [250704] 对得上，正是这一部
+#
+# 也就是说 bgm 的旧版搜索是**整串匹配**：匹配不上就退化成一堆热门条目。
+# 差一个词就从"精确命中"变成"完全无关"，所以这个尾巴必须剪掉。
+#
+# 风险是有界的：万一某个作品的正名真的以「を見る」结尾，剪掉后查询变成它的前缀，
+# 整串匹配失败 -> 退化成热门条目 -> 被 query_matches_metadata 拦下 -> 待确认。
+# 结果是"要人工看一眼"，不是"悄悄写错"。
+PROMO_SUFFIX = re.compile(r"\s*を[見み]る\s*$")
+
 # 集数标记：命中即**从这里截断**，后续都是副标题
 EPISODE_CUT = re.compile(
     r"第\s*[\d一二三四五六七八九十百〇零]+\s*[話话集回章弾幕巻卷]"
@@ -85,6 +102,9 @@ def clean_query_name(filename: str) -> str:
     matched = EPISODE_CUT.search(normalize_markers(text))
     if matched:
         text = text[: matched.start()]
+
+    # 放在截断**之后**：尾巴总是在标记后面
+    text = PROMO_SUFFIX.sub("", text)
 
     text = TRAILING_BRACKET.sub("", text)  # 末尾作者方括号
     text = re.sub(r"[._]+", " ", text)

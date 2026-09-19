@@ -85,8 +85,14 @@ def parse_search(payload: str, query: str) -> MediaMetadata | None:
     if not isinstance(data, dict):
         raise SourceError("Bangumi 响应结构异常", reason="parse_error")
 
-    # 旧版接口出错时返回 {"code":404,"error":"Not Found"}，没有 list 字段
+    # 旧版接口"什么都没搜到"时返回的**不是** {"results":0,"list":[]}，
+    # 而是 HTTP 200 + {"code":404,"error":"Not Found"}（实测：关键词换成乱码就是这个形状）。
+    # 这是"站点说没有"，不是"接口坏了" —— 必须返回 None（not_found）。
+    # 以前这里一律抛 parse_error，于是"没搜到"在记录页上显示成"bangumi 坏了"，
+    # 排查时会去找解析器的 bug。熔断器不受影响（它只看 HTTP 层），但诊断信息在骗人。
     if "list" not in data:
+        if data.get("code") == 404:
+            return None
         if data.get("code"):
             raise SourceError(
                 f"Bangumi 旧版搜索接口返回 {data.get('code')}：{data.get('error')}",

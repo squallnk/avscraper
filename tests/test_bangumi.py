@@ -71,17 +71,51 @@ def test_empty_result_returns_none():
     assert parse_search('{"results":0,"list":[]}', "任意关键词") is None
 
 
-def test_legacy_api_error_is_reported_as_parse_error():
-    """旧版接口出错时返回 ``{"code":404,"error":"Not Found"}``，没有 list 字段。
+def test_no_match_is_not_found_not_a_parse_error():
+    r"""旧版接口"什么都没搜到"时返回 HTTP 200 + ``{"code":404,"error":"Not Found"}``，
+    而**不是** ``{"results":0,"list":[]}``。
 
-    这种情况必须报 parse_error —— 让人看出"是这个源坏了"，
-    而不是误判成"这部作品没有"。
+    固件 ``bgm_probe_nonsense.json`` 就是拿一个肯定不存在的关键词抓的。
+
+    这里以前一律抛 ``parse_error``（我当时以为 code=404 表示"接口没了"），
+    于是"没搜到"在记录页上显示成"bangumi 坏了"，排查时会去找解析器的 bug。
     """
-    payload = json.dumps({"request": "/subject/457954", "code": 404, "error": "Not Found"})
+    assert parse_search(load_fixture("bgm_probe_nonsense.json"), "任意关键词") is None
+
+
+def test_other_error_codes_still_raise():
+    """非 404 的 code 是另一回事（服务端出错），不能当成"没有"。"""
+    payload = json.dumps({"request": "/search/subject/x", "code": 500, "error": "Boom"})
     with pytest.raises(SourceError) as excinfo:
-        parse_search(payload, "牝を狩る村")
+        parse_search(payload, "x")
     assert excinfo.value.reason == "parse_error"
-    assert "404" in str(excinfo.value)
+    assert "500" in str(excinfo.value)
+
+
+def test_promo_suffix_breaks_the_match_but_the_clean_query_hits():
+    r"""这一对固件就是"为什么要剪掉『を見る』"的全部证据。
+
+    bgm 的旧版搜索是**整串匹配**：差一个词就从"精确命中"变成"一堆无关热门条目"。
+    """
+    from server.cleaner import clean_query_name
+
+    filename = "[250704][AnimeFesta]彼女がセパレートをまとう理由を見る.chs.mp4"
+    query = clean_query_name(filename)
+    assert query == "彼女がセパレートをまとう理由"
+
+    # 带着尾巴搜：第一条是 2013 年的魔法少女小圆剧场版，跟这部毫无关系
+    with_tail = _parse("bgm_probe_animefesta.json", "彼女がセパレートをまとう理由を見る")
+    assert with_tail is not None
+    assert with_tail.title == "剧场版 魔法少女小圆 [新篇] 叛逆的物语"
+    assert query_matches_metadata("彼女がセパレートをまとう理由を見る", with_tail) is False
+
+    # 剪掉尾巴后：第一条就是这一部，中文名和发售日都对得上
+    cleaned = _parse("bgm_probe_nomiru.json", query)
+    assert cleaned is not None
+    assert cleaned.title == "女友穿上两截式的原因"
+    assert cleaned.original_title == "彼女がセパレートをまとう理由"
+    assert cleaned.release_date == "2025-07-04"
+    assert query_matches_metadata(query, cleaned) is True
 
 
 def test_structurally_changed_response_is_reported():
