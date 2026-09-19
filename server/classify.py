@@ -91,10 +91,17 @@ _JANIME_STUDIOS = (
     "green bunny", "グリーンバニー", "vanilla", "バニラ", "animac", "アニマック",
     "media bank", "メディアバンク", "とらのあな", "toranoana", "37℃",
     "white bear", "ホワイトベア", "hills", "ヒルズ", "オフィス8番",
+    # 实跑补：这一条被判成 unknown 后整批跳过，悄无声息地没被刮
+    "animefesta", "彗星社", "suiseisha", "hornet", "ziz",
 )
 
 # `[251114][Queen Bee]作品名...` —— 日期前缀 + 制作组方括号，是里番发布的典型结构
 _RELEASE_PREFIX_RE = re.compile(r"^\s*\[\s*(?:\d{6}|\d{8})\s*\]\s*\[([^\]]{1,40})\]")
+
+# 结构兜底专用：**只要 6 位日期**（`yymmdd`），也就是 `[250704][制作组] 标题` 这种
+# 里番发布形态。8 位 `[20240101][Some Group]` 是另一类命名（欧美/压制组的常见写法），
+# 不能因为"有方括号"就当成里番 —— 见 tests 里那条 `unknown_bracket_group` 用例。
+_RELEASE_PREFIX_6DIGIT = re.compile(r"^\s*\[\s*\d{6}\s*\]\s*\[[^\]]{1,40}\]\s*\S")
 
 # 集数标记，出现即强烈暗示这是分集动画而不是单体影片
 _EPISODE_MARKERS = re.compile(
@@ -309,6 +316,21 @@ def detect_by_path(path: str | Path) -> MatchInfo | None:
             category_label=CONTENT_TYPE_LABELS[ContentType.WESTERN],
             confidence=0.6,
             evidence=["路径含欧美标记"],
+        )
+
+    # 结构性兜底：文件名就是 "[日期][制作组] 标题" 这种发布形态。
+    #
+    # 放在最后 —— 它比前面几条都弱，无码/国产/欧美标记应该优先。
+    # 但它挡住的是**一整类**问题：制作组名单永远补不完（实跑里 AnimeFesta
+    # 不在名单上，那个文件被判成 unknown → skipped，悄无声息地没被刮）。
+    # "按月归档"的里番库正好就是这种命名，所以这个兜底对它是准的。
+    if _RELEASE_PREFIX_6DIGIT.match(Path(path).name):
+        return MatchInfo(
+            number=None,
+            content_type=ContentType.JANIME,
+            category_label=CONTENT_TYPE_LABELS[ContentType.JANIME],
+            confidence=0.5,
+            evidence=["文件名是 [日期][制作组] 的发布形态"],
         )
 
     return None

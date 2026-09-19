@@ -79,9 +79,33 @@ def test_studio_word_alone_does_not_trigger_janime():
 
 
 def test_unknown_bracket_group_is_not_janime():
-    """方括号里有东西不代表就是里番制作组。"""
+    """方括号里有东西不代表就是里番制作组。
+
+    注意这里用的是 **8 位**日期（`[20240101]`）—— 那是另一类命名（欧美/压制组的
+    常见写法）。结构兜底只认 6 位 `yymmdd` 的里番发布形态，所以这条仍然不判里番。
+    """
     result = classify("/media/media/[20240101][Some Random Group]Movie Name.mp4")
     assert result.content_type is not ContentType.JANIME
+
+
+def test_six_digit_release_prefix_falls_back_to_janime():
+    r"""`[yymmdd][制作组] 标题` —— 按月归档的里番库就是这个命名形态。
+
+    制作组名单是一个永远补不完的清单：实跑里 `AnimeFesta` 不在名单上，
+    那个文件被判成 unknown → skipped，**悄无声息地没被刮**（用户在记录页
+    只能看到一条"跳过"，看不出是名单漏了）。所以留一条结构兜底。
+    """
+    result = classify("/media/media/[250711][谁也没听说过的字幕组]某个作品.mp4")
+    assert result.content_type is ContentType.JANIME
+    # 比制作组名单（0.7）弱 —— 它只是"形态像"，不是"认得这个组"
+    assert result.confidence < 0.7
+
+
+def test_animefesta_is_a_known_studio():
+    """实跑踩到的：AnimeFesta 不在名单上，文件被整批跳过。"""
+    result = classify("/media/media/[250704][AnimeFesta]彼女がセパレートをまとう理由を見る.chs.mp4")
+    assert result.content_type is ContentType.JANIME
+    assert any("AnimeFesta" in e for e in result.evidence)
 
 
 def test_janime_by_episode_marker():
