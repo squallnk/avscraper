@@ -85,3 +85,35 @@ async def test_summary_text_names_every_bucket(monkeypatch):
 
     assert "待确认 3" in task.message
     assert "失败 0" in task.message
+
+
+@pytest.mark.parametrize(
+    ("payload", "expect_marker"),
+    [
+        ({}, True),
+        ({"write_metadata": False}, True),
+        ({"write_metadata": True}, False),
+    ],
+)
+async def test_summary_says_when_nothing_was_written(monkeypatch, payload, expect_marker):
+    """没写盘时摘要必须说出来。
+
+    起因：WebUI 起扫描时 write_metadata 写死 false，于是记录页一路显示成功、
+    磁盘上却一个文件都没有。用户看不出"成功"只是"数据库里成功了"。
+    """
+
+    async def fake_scrape_one(ctx, path, **kwargs):  # noqa: ANN001, ANN202, ARG001
+        return _record(str(path), ScrapeStatus.SUCCESS)
+
+    monkeypatch.setattr(pipeline, "scrape_one", fake_scrape_one)
+
+    ctx = SimpleNamespace(
+        config=RuntimeConfig(),
+        db=_Db(),
+        storage=_Storage(),
+        settings=SimpleNamespace(allowed_roots=[Path("/media")]),
+    )
+    task = SimpleNamespace(payload=payload, total=0, current=0, message="", result={})
+    await pipeline.run_scan_and_scrape(ctx, task)  # type: ignore[arg-type]
+
+    assert ("未写盘" in task.message) is expect_marker

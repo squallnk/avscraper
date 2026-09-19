@@ -8,6 +8,7 @@ const tasks = ref<TaskInfo[]>([])
 const roots = ref('')
 const limit = ref(0)
 const skipKnown = ref(true)
+const writeMetadata = ref(false)
 const confirm = ref(false)
 let timer: number | undefined
 
@@ -29,7 +30,7 @@ async function start() {
       recursive: true,
       limit: limit.value,
       skip_known: skipKnown.value,
-      write_metadata: false,
+      write_metadata: writeMetadata.value,
       confirm: true,
     }
     if (roots.value.trim()) {
@@ -77,9 +78,18 @@ onUnmounted(() => window.clearInterval(timer))
           </span>
         </n-space>
       </n-form-item>
+      <n-form-item label="写入 NFO 与图片">
+        <n-space align="center">
+          <n-switch v-model:value="writeMetadata" />
+          <span style="color: #888">
+            关掉时<strong>只写数据库</strong>，磁盘上不会有任何变化 —— 记录页会显示成功，
+            但 Emby 什么都看不到。还需要设置里 dry_run 关闭且 organize_enabled 打开。
+          </span>
+        </n-space>
+      </n-form-item>
       <n-space align="center">
         <n-switch v-model:value="confirm" />
-        <span>我确认在允许根目录内执行（默认仍为只读，不会移动文件）</span>
+        <span>我确认在允许根目录内执行（不会移动文件；是否写 NFO/图片见上面两个开关）</span>
         <n-button type="primary" @click="start">开始扫描</n-button>
         <n-button @click="refresh">刷新</n-button>
       </n-space>

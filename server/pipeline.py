@@ -351,9 +351,10 @@ async def run_scan_and_scrape(ctx: AppContext, task: Task) -> None:
             "skipped": skipped,
         }
     )
+    suffix = "" if task.payload.get("write_metadata") else "（未写盘：本次只写数据库）"
     task.message = (
         f"完成：成功 {succeeded}，待确认 {pending}，未命中 {missing}，"
-        f"失败 {failed}，跳过 {skipped}"
+        f"失败 {failed}，跳过 {skipped}{suffix}"
     )
 
 
