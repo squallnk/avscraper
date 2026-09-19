@@ -70,8 +70,31 @@ def test_search_url_carries_age_ack():
     assert url.startswith("https://www.getchu.com/php/search.phtml?search_keyword=ISLAND")
 
 
-def test_search_url_encodes_keyword():
-    assert "%E3%82%AA%E3%83%8A%E3%83%8B%E3%83%BC" in search_url("オナニー")
+def test_search_url_encodes_keyword_as_euc_jp():
+    r"""关键词必须按 **EUC-JP** 编码，不是 UTF-8 —— 这条以前写反了。
+
+    getchu 对关键词做编码自动判定：纯假名的 UTF-8 字节是合法 EUC-JP 序列，
+    会被当成 EUC-JP 读成乱码 -> 0 条结果；含汉字的才不会。
+    于是"有的作品查得到、有的查不到"，而且 0 条和"确实没有"长得一模一样。
+
+        ```オナニー``` の EUC-JP 是 %A5%AA%A5%CA%A5%CB%A1%BC；
+    UTF-8 的 %E3%82%AA... 正是会被误判的那种。
+    """
+    url = search_url("オナニー")
+    assert "%A5%AA%A5%CA%A5%CB%A1%BC" in url
+    assert "%E3%82%AA" not in url
+
+
+@pytest.mark.parametrize(
+    ("keyword", "expected"),
+    [
+        ("サキュバス", "%A5%B5%A5%AD%A5%E5%A5%D0%A5%B9"),
+        ("のっと・せくさろいど", "%A4%CE%A4%C3%A4%C8%A1%A6%A4%BB%A4%AF%A4%B5%A4%ED%A4%A4%A4%C9"),
+    ],
+)
+def test_search_url_matches_the_verified_euc_jp_encodings(keyword, expected):
+    """这两个关键词是**实测**过的：UTF-8 0 条、EUC-JP 分别 30 条 / 2 条。"""
+    assert expected in search_url(keyword)
 
 
 def test_search_url_optional_genre():
@@ -178,6 +201,22 @@ def test_parse_search_uses_result_list_only(search_html):
     assert ids
     assert ids[0] == "1210508"
     assert len(ids) == len(set(ids))
+
+
+def test_euc_jp_keyword_search_finds_the_real_products():
+    r"""编码修好之后，搜索能真正找到作品 —— 用两份**同关键词、不同编码**的真实响应钉住。
+
+    ``gc_euc_2``（EUC-JP）里有 2 条，正是我们要的那两话；
+    ``gc_utf8_2``（UTF-8）里 0 条，而且关键词回显是乱码。
+    这两份合起来就是这个 bug 的完整证据，以后谁想改回 ``quote()`` 都会立刻红。
+    """
+    euc = _fixture("gc_euc_2.html")
+    assert has_results(euc)
+    assert parse_search(euc) == ["1331771", "1320853"]
+
+    utf8 = _fixture("gc_utf8_2.html")
+    assert has_results(utf8) is False
+    assert parse_search(utf8) == []
 
 
 def test_empty_search_page_detected(empty_html):

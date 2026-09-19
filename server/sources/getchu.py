@@ -21,7 +21,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import quote
+from urllib.parse import quote_from_bytes
 
 from bs4 import BeautifulSoup
 
@@ -197,11 +197,35 @@ def _looks_like_attestation(html: str) -> bool:
     return "年齢認証" in html or "attestation.html" in html
 
 
+def _quote(text: str) -> str:
+    r"""按 **EUC-JP** 做百分号编码。关键词不能用 UTF-8，这是踩过的坑。
+
+    getchu 是 EUC-JP 站点，它对关键词做**编码自动判定**：
+
+    - **纯假名/符号**的 UTF-8 字节恰好是**合法的 EUC-JP 序列**，
+      于是被判成 EUC-JP 读进来 —— 关键词变成乱码，**0 条结果**；
+    - 含**汉字**的 UTF-8 字节多半不合法，才会被判成 UTF-8 而正确。
+
+    于是表现成"有的作品查得到、有的查不到"，非常难查。对照实测：
+
+        サキュバス             UTF-8 -> 0 条     EUC-JP -> 30 条
+        のっと・せくさろいど      UTF-8 -> 0 条     EUC-JP -> 2 条（正是要找的那两话）
+
+    关键词是乱码时 getchu 不会报错，只是安静地返回 0 条 —— 而这个 0 条
+    和"站点确实没有这部作品"长得一模一样，所以这个 bug 从第一天活到现在。
+    """
+    try:
+        return quote_from_bytes(text.encode(ENCODING))
+    except UnicodeEncodeError:
+        # EUC-JP 编不出来的字符（生僻字/emoji）退回 UTF-8，至少能发出请求
+        return quote_from_bytes(text.encode("utf-8"))
+
+
 def search_url(keyword: str, *, genre: str = "") -> str:
     """带 `gc=gc` 的搜索地址。少了它就会被弹到年龄确认页。"""
-    parts = [f"{BASE}/php/search.phtml?search_keyword={quote(keyword)}"]
+    parts = [f"{BASE}/php/search.phtml?search_keyword={_quote(keyword)}"]
     if genre:
-        parts.append(f"genre={quote(genre)}")
+        parts.append(f"genre={_quote(genre)}")
     parts.append(AGE_ACK_PARAM)
     return "&".join(parts)
 
