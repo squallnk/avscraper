@@ -493,6 +493,49 @@ async def rescan_record(
     }
 
 
+class PurgeRequest(BaseModel):
+    """删除刮削记录。条件之间是 AND，**至少要给一个**。"""
+
+    ids: list[str] = Field(default_factory=list)
+    statuses: list[str] = Field(default_factory=list)
+    root: str | None = None
+    """按目录前缀删（只删该目录及其子目录下的记录）。"""
+
+    confirm: bool = False
+
+
+@router.post("/records/purge")
+async def purge_records(payload: PurgeRequest, request: Request) -> dict[str, Any]:
+    """删记录，让这些文件下次扫描时重新变回"没刮过"。
+
+    删记录是**唯一**能把一条错配（或不需要的）结果从库里清掉的办法 ——
+    否则它一直是 `success`，扫描按设计会永远跳过它。
+
+    只动数据库，不碰磁盘：已经写出去的 NFO 与图片不会因此消失。
+    """
+    ctx = get_ctx(request)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="需要 confirm=true 才会删除记录")
+
+    parsed: list[str] = []
+    for value in payload.statuses:
+        try:
+            parsed.append(ScrapeStatus(value).value)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"未知状态: {value}") from exc
+
+    try:
+        deleted = await ctx.db.delete_records(
+            ids=payload.ids, statuses=parsed, root=payload.root
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    logger.info("删除刮削记录 %d 条（ids=%d statuses=%s root=%s）",
+                deleted, len(payload.ids), parsed, payload.root)
+    return {"deleted": deleted}
+
+
 # ---------------------------------------------------------------- 日志
 
 

@@ -130,6 +130,13 @@ export interface RescanRequest {
   confirm?: boolean
 }
 
+export interface PurgeRequest {
+  ids?: string[]
+  statuses?: string[]
+  root?: string
+  confirm?: boolean
+}
+
 export interface RescanResult {
   record: RecordInfo
   written: string[]
@@ -184,6 +191,11 @@ export const api = {
     call<{ task_id: string }>('/api/tasks/scan', { method: 'POST', body: JSON.stringify(payload) }),
   records: (status?: string) =>
     call<RecordInfo[]>(status ? `/api/records?status=${status}` : '/api/records'),
+  purgeRecords: (payload: PurgeRequest) =>
+    call<{ deleted: number }>('/api/records/purge', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   rescan: (id: string, payload: RescanRequest) =>
     call<RescanResult>(`/api/records/${id}/rescan`, {
       method: 'POST',

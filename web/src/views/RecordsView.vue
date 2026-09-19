@@ -14,11 +14,13 @@ import {
   NSpace,
   NSwitch,
   NTag,
+  useDialog,
   useMessage,
 } from 'naive-ui'
 import { api, type MediaMetadataInfo, type RecordInfo, type SourceInfo } from '@/api'
 
 const message = useMessage()
+const dialog = useDialog()
 const records = ref<RecordInfo[]>([])
 const sources = ref<SourceInfo[]>([])
 const status = ref<string | null>(null)
@@ -68,6 +70,67 @@ async function load() {
     records.value = await api.records(status.value ?? undefined)
   } catch (e) {
     message.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
+// ------------------------------------------------------------------ 删除
+
+const showClean = ref(false)
+const cleanStatuses = ref<string[]>([])
+const cleanRoot = ref('')
+const cleanBusy = ref(false)
+const cleanConfirm = ref(false)
+
+const cleanStatusOptions = statusOptions
+  .filter((o) => o.value !== null)
+  .map((o) => ({ label: o.label, value: o.value as string }))
+
+const cleanReady = computed(
+  () => (cleanStatuses.value.length > 0 || cleanRoot.value.trim() !== '') && cleanConfirm.value,
+)
+
+async function purge(payload: Record<string, unknown>, done?: () => void) {
+  try {
+    const result = await api.purgeRecords({ ...payload, confirm: true })
+    message.success(`已删除 ${result.deleted} 条记录`)
+    done?.()
+    await load()
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
+/**
+ * 删记录是让一个文件"重新变得可刮"的唯一办法 —— 否则它一直是 success，
+ * 扫描按设计会跳过它。
+ */
+function confirmDelete(row: RecordInfo) {
+  dialog.warning({
+    title: '删除这条记录',
+    content: `删除后这个文件会在下次扫描时重新刮一次。只删数据库记录，不动磁盘上的 NFO 和图片。\n\n${row.path}`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: () => purge({ ids: [row.id] }),
+  })
+}
+
+async function runClean() {
+  cleanBusy.value = true
+  try {
+    await purge(
+      {
+        statuses: cleanStatuses.value,
+        root: cleanRoot.value.trim() || undefined,
+      },
+      () => {
+        showClean.value = false
+        cleanStatuses.value = []
+        cleanRoot.value = ''
+        cleanConfirm.value = false
+      },
+    )
+  } finally {
+    cleanBusy.value = false
   }
 }
 
@@ -183,21 +246,30 @@ const columns = [
   {
     title: '操作',
     key: 'actions',
-    width: 90,
+    width: 158,
     fixed: 'right' as const,
     render: (row: RecordInfo) =>
-      h(
-        NButton,
-        {
-          size: 'small',
-          type: row.status === 'need_selection' ? 'warning' : 'default',
-          onClick: async () => {
-            openRescan(row)
-            query.value = (await defaultQuery(row)) || row.number || ''
-          },
-        },
-        { default: () => '重刮' },
-      ),
+      h(NSpace, { size: 4 }, {
+        default: () => [
+          h(
+            NButton,
+            {
+              size: 'small',
+              type: row.status === 'need_selection' ? 'warning' : 'default',
+              onClick: async () => {
+                openRescan(row)
+                query.value = (await defaultQuery(row)) || row.number || ''
+              },
+            },
+            { default: () => '重刮' },
+          ),
+          h(
+            NButton,
+            { size: 'small', quaternary: true, onClick: () => confirmDelete(row) },
+            { default: () => '删除记录' },
+          ),
+        ],
+      }),
   },
 ]
 
@@ -219,6 +291,7 @@ onMounted(async () => {
     <n-space style="margin-bottom: 12px">
       <n-select v-model:value="status" :options="statusOptions" style="width: 160px" @update:value="load" />
       <n-button @click="load">刷新</n-button>
+      <n-button quaternary @click="showClean = true">清理记录…</n-button>
     </n-space>
     <n-data-table :columns="columns" :data="records" :bordered="false" size="small" :scroll-x="1500" />
 
@@ -280,6 +353,43 @@ onMounted(async () => {
         <div v-if="!writesEnabled" style="color: #888; text-align: right; margin-top: 6px">
           写入未开启（dry_run=true 或 organize_enabled=false），只能预览
         </div>
+      </template>
+    </n-modal>
+
+    <n-modal v-model:show="showClean" preset="card" style="width: 560px" title="清理刮削记录">
+      <n-alert type="info" :bordered="false" style="margin-bottom: 12px">
+        删掉记录后，这些文件会在下次扫描时重新刮一次。
+        <br />
+        <strong>只删数据库记录，不动磁盘上的 NFO 和图片</strong> ——
+        已经写出去的东西要你自己处理。
+      </n-alert>
+      <n-form label-placement="left" label-width="100">
+        <n-form-item label="按状态删">
+          <n-select
+            v-model:value="cleanStatuses"
+            multiple
+            :options="cleanStatusOptions"
+            placeholder="选一个或多个状态"
+          />
+        </n-form-item>
+        <n-form-item label="按目录删">
+          <n-input v-model:value="cleanRoot" placeholder="留空表示不限，例如 /media/media/里番" />
+        </n-form-item>
+        <n-form-item label="确认">
+          <n-space align="center">
+            <n-switch v-model:value="cleanConfirm" />
+            <span style="color: #888">两个条件都不填等于清空整张记录表，后端会直接拒绝</span>
+          </n-space>
+        </n-form-item>
+      </n-form>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showClean = false">取消</n-button>
+          <n-button type="error" :loading="cleanBusy" :disabled="!cleanReady" @click="runClean">
+            删除匹配的记录
+          </n-button>
+        </n-space>
       </template>
     </n-modal>
   </n-card>

@@ -242,6 +242,48 @@ class Database:
         row = await cur.fetchone()
         return self._row_to_record(row) if row else None
 
+    async def delete_records(
+        self,
+        *,
+        ids: Iterable[str] = (),
+        statuses: Iterable[str] = (),
+        root: str | None = None,
+    ) -> int:
+        """按条件删记录，返回删除条数。条件之间是 **AND**。
+
+        **至少要给一个条件**：空条件不是"删全部"，是调用方写错了 —— 直接抛错，
+        免得一个字段名笔误就把整张表清空。
+
+        只动数据库，不碰磁盘。删掉记录的效果是让这些文件在下次扫描时
+        重新变成"没刮过"（见 `succeeded_paths`）。
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        id_list = [value for value in ids if value]
+        if id_list:
+            clauses.append(f"id IN ({','.join(['?'] * len(id_list))})")
+            params.extend(id_list)
+
+        status_list = [value for value in statuses if value]
+        if status_list:
+            clauses.append(f"status IN ({','.join(['?'] * len(status_list))})")
+            params.extend(status_list)
+
+        if root:
+            base = root.rstrip("/")
+            clauses.append("(path = ? OR path LIKE ? ESCAPE '\\')")
+            params.extend([base, _like_prefix(base) + "%"])
+
+        if not clauses:
+            raise ValueError("至少需要一个删除条件（id / 状态 / 目录）")
+
+        cur = await self.conn.execute(
+            "DELETE FROM scrape_records WHERE " + " AND ".join(clauses), params
+        )
+        await self.conn.commit()
+        return cur.rowcount or 0
+
     async def delete_record_by_path(self, path: str) -> int:
         cur = await self.conn.execute("DELETE FROM scrape_records WHERE path = ?", (path,))
         await self.conn.commit()

@@ -20,7 +20,8 @@ from server.models import ScrapeRecord, ScrapeStatus
 
 
 def _record(path: str, status: ScrapeStatus) -> ScrapeRecord:
-    return ScrapeRecord(id=path[-12:], path=path, status=status)
+    # id 直接用路径：它本来就是不透明主键，用路径做 id 保证唯一、也方便按 id 删除
+    return ScrapeRecord(id=path, path=path, status=status)
 
 
 @pytest.fixture
@@ -52,6 +53,45 @@ async def test_tracked_covers_every_status(db):
         await db.upsert_record(_record(f"/m/{status.value}.mp4", status))
 
     assert len(await db.tracked_paths()) == 4
+
+
+def _under(tmp_path, *parts: str) -> str:
+    """目录前缀匹配用的是**本机分隔符**（见 `db._like_prefix`），
+    所以这里必须拼本机路径，不能写死 `/m/...`。"""
+    return str(tmp_path.joinpath(*parts))
+
+
+async def test_delete_by_ids_statuses_and_root(db, tmp_path):
+    keep = _under(tmp_path, "m", "b.mp4")
+    await db.upsert_record(_record(_under(tmp_path, "m", "a.mp4"), ScrapeStatus.SUCCESS))
+    await db.upsert_record(_record(keep, ScrapeStatus.SUCCESS))
+    await db.upsert_record(_record(_under(tmp_path, "m", "c.mp4"), ScrapeStatus.NEED_SELECTION))
+    await db.upsert_record(_record(_under(tmp_path, "other", "d.mp4"), ScrapeStatus.SUCCESS))
+
+    assert await db.delete_records(ids=[_under(tmp_path, "m", "a.mp4")]) == 1
+    assert await db.delete_records(statuses=[ScrapeStatus.NEED_SELECTION.value]) == 1
+    assert await db.delete_records(root=_under(tmp_path, "other")) == 1
+    assert await db.succeeded_paths() == {keep}
+
+
+async def test_delete_conditions_are_anded(db, tmp_path):
+    await db.upsert_record(_record(_under(tmp_path, "m", "a.mp4"), ScrapeStatus.SUCCESS))
+    miss = _under(tmp_path, "m", "b.mp4")
+    await db.upsert_record(_record(miss, ScrapeStatus.NOT_FOUND))
+
+    # 目录 + 状态：只删该目录下状态也对得上的那条
+    assert await db.delete_records(
+        root=_under(tmp_path, "m"), statuses=[ScrapeStatus.SUCCESS.value]
+    ) == 1
+    assert await db.tracked_paths() == {miss}
+
+
+async def test_delete_without_conditions_refuses(db):
+    """空条件不是"删全部"，是调用方写错了 —— 必须抛错而不是清表。"""
+    await db.upsert_record(_record("/m/a.mp4", ScrapeStatus.SUCCESS))
+    with pytest.raises(ValueError):
+        await db.delete_records()
+    assert len(await db.tracked_paths()) == 1
 
 
 async def test_rescrape_after_failure_is_reachable(db):
