@@ -223,6 +223,50 @@ async def test_existing_file_is_skipped_unless_overwrite(tmp_path):
     assert any("已存在" in item for item in report.skipped)
 
 
+async def test_run_can_force_overwrite_over_the_config(tmp_path):
+    """人工重刮要能压过配置里的 overwrite=false。
+
+    场景：删掉一条错配记录后重刮。NFO 换了新内容，但错的那张封面还在磁盘上 ——
+    不覆盖的话 NFO 是新的、图还是旧的，看起来像修好了其实没有。
+    这种"修了一半"比明显没修更难发现。
+    """
+    http = _FakeHttp({"https://img.test/poster.jpg": b"new"})
+    ctx = _ctx(tmp_path, http, images=ImageDownloadConfig(overwrite=False, thumb=False))
+    metadata_dir = tmp_path / "media" / "meta"
+    metadata_dir.mkdir(parents=True)
+    (metadata_dir / "MIDV-123-poster.jpg").write_bytes(b"old")
+
+    report = await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
+        metadata_dir=metadata_dir,
+        overwrite=True,
+    )
+    assert (metadata_dir / "MIDV-123-poster.jpg").read_bytes() == b"new"
+    assert not report.skipped
+
+
+async def test_run_overwrite_false_also_wins_over_the_config(tmp_path):
+    """反过来也要成立：批量扫描不该因为配置开了 overwrite 就重下。
+
+    参数是"这一次跑的行为"，不是"或"。
+    """
+    http = _FakeHttp({"https://img.test/poster.jpg": b"new"})
+    ctx = _ctx(tmp_path, http, images=ImageDownloadConfig(overwrite=True, thumb=False))
+    metadata_dir = tmp_path / "media" / "meta"
+    metadata_dir.mkdir(parents=True)
+    (metadata_dir / "MIDV-123-poster.jpg").write_bytes(b"old")
+
+    await ImageDownloader(ctx).run(  # type: ignore[arg-type]
+        metadata=_metadata(),
+        aggregated=AggregatedMetadata(number="MIDV-123", content_type=ContentType.CENSORED),
+        metadata_dir=metadata_dir,
+        overwrite=False,
+    )
+    assert (metadata_dir / "MIDV-123-poster.jpg").read_bytes() == b"old"
+    assert http.calls == []
+
+
 async def test_overwrite_replaces_existing(tmp_path):
     http = _FakeHttp({"https://img.test/poster.jpg": b"new"})
     ctx = _ctx(tmp_path, http, images=ImageDownloadConfig(overwrite=True, thumb=False))

@@ -481,7 +481,13 @@ async def rescan_record(
         target = _Path(payload.metadata_dir or ctx.config.metadata_dir or path.parent)
         try:
             written = [str(p) for p in await write_record_metadata(
-                ctx, record=fresh, video_path=path, metadata_dir=target
+                ctx,
+                record=fresh,
+                video_path=path,
+                metadata_dir=target,
+                # 人工重刮的前提就是"上一条结果不对" —— 旧封面必须被换掉，
+                # 否则 NFO 是新的、图还是旧的，看起来像修好了其实没有。
+                overwrite_images=True,
             )]
         except Exception as exc:  # noqa: BLE001 - 同上
             raise HTTPException(status_code=502, detail=f"写元数据失败: {exc}") from exc

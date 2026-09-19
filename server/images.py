@@ -122,9 +122,18 @@ class ImageDownloader:
         aggregated: AggregatedMetadata,
         metadata_dir: Path,
         stem: str | None = None,
+        overwrite: bool | None = None,
     ) -> ImageReport:
+        """`overwrite=None` 表示跟随配置；显式 True 用于"人工重刮"。
+
+        为什么要能覆盖：删记录重刮的前提是"这条结果不对"，而错的那张封面
+        已经躺在磁盘上了。不覆盖的话 NFO 换了新内容、封面还是旧的，
+        看起来像修好了其实没有 —— 这种"修了一半"比明显没修更难发现。
+        """
         report = ImageReport()
         config = self._ctx.config.images
+        if overwrite is None:
+            overwrite = config.overwrite
 
         if not (self._ctx.config.organize_enabled and not self._ctx.config.dry_run):
             report.skipped.append("写入未开启（dry_run 或 organize_enabled=false）")
@@ -146,7 +155,7 @@ class ImageDownloader:
 
         async def one(task: ImageTask) -> None:
             async with semaphore:
-                await self._download_one(task, metadata_dir, report, referer, config)
+                await self._download_one(task, metadata_dir, report, referer, config, overwrite)
 
         await asyncio.gather(*(one(task) for task in tasks), return_exceptions=True)
         return report
@@ -170,9 +179,10 @@ class ImageDownloader:
         report: ImageReport,
         referer: str | None,
         config: ImageDownloadConfig,
+        overwrite: bool,
     ) -> None:
         target = metadata_dir / task.relative_path
-        if target.exists() and not config.overwrite:
+        if target.exists() and not overwrite:
             report.skipped.append(f"{task.kind}: 已存在")
             return
 

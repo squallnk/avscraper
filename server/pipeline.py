@@ -186,6 +186,7 @@ async def write_metadata(
     video_path: Path | None = None,
     season: int | None = None,
     episode: int | None = None,
+    overwrite_images: bool | None = None,
 ) -> list[Path]:
     """写 NFO 与图片到 metadata_dir。返回写出的文件列表。
 
@@ -233,7 +234,11 @@ async def write_metadata(
     from server.images import ImageDownloader
 
     report = await ImageDownloader(ctx).run(
-        metadata=metadata, aggregated=aggregated, metadata_dir=metadata_dir, stem=stem
+        metadata=metadata,
+        aggregated=aggregated,
+        metadata_dir=metadata_dir,
+        stem=stem,
+        overwrite=overwrite_images,
     )
     written.extend(report.written)
     if report.failed:
@@ -247,11 +252,15 @@ async def write_record_metadata(
     record: ScrapeRecord,
     video_path: Path,
     metadata_dir: Path,
+    overwrite_images: bool | None = None,
 ) -> list[Path]:
     """把一条记录落盘成 NFO + 图片。
 
     批量任务和"人工重刮后写入"走的是同一条路，
     免得两边各写一套、最后只有一边修了 bug。
+
+    `overwrite_images` 留空表示跟随配置；人工重刮传 True ——
+    那一次的前提就是"上一条结果不对"，旧封面必须被换掉。
     """
     if record.metadata is None:
         return []
@@ -268,6 +277,7 @@ async def write_record_metadata(
         video_path=video_path,
         season=record.season,
         episode=record.episode,
+        overwrite_images=overwrite_images,
     )
 
 

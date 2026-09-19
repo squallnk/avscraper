@@ -83,6 +83,21 @@ async def test_purge_by_status_clears_the_pending_ones(env):
     assert await env.db.tracked_paths() == {env.ok}
 
 
+def test_rescan_forces_image_overwrite():
+    """把链路钉住：人工重刮必须传 overwrite_images=True。
+
+    光有下载器上的开关不够 —— 路由不传，它永远走配置里的 false，
+    表现就是"NFO 换了、封面没换"。这里挡的就是这种断链。
+    """
+    import inspect
+
+    from server.api import routes
+
+    source = inspect.getsource(routes.rescan_record)
+    assert "write_record_metadata" in source
+    assert "overwrite_images=True" in source
+
+
 async def test_purge_by_root_only_touches_that_directory(env, tmp_path):
     elsewhere = str(tmp_path.joinpath("else", "there.mp4"))
     await env.db.upsert_record(_record(elsewhere, ScrapeStatus.SUCCESS))

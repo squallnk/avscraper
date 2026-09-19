@@ -350,7 +350,11 @@ onMounted(async () => {
             预览并写入
           </n-button>
         </n-space>
-        <div v-if="!writesEnabled" style="color: #888; text-align: right; margin-top: 6px">
+        <div style="color: #888; text-align: right; margin-top: 6px">
+          写入会<strong>重写 NFO 并覆盖已存在的图片</strong> —— 重刮的前提就是上一条结果不对，
+          留着旧封面会变成"修了一半"
+        </div>
+        <div v-if="!writesEnabled" style="color: #888; text-align: right; margin-top: 4px">
           写入未开启（dry_run=true 或 organize_enabled=false），只能预览
         </div>
       </template>
