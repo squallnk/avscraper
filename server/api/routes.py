@@ -610,6 +610,15 @@ async def rescan_record(
     except Exception as exc:  # noqa: BLE001 - 把失败原文报给界面，便于排查
         raise HTTPException(status_code=502, detail=f"重刮失败: {exc}") from exc
 
+    # 手动重刮也要进日志。批量扫描每一步都记了，可这条路径以前一句都不记 ——
+    # 用户在界面上点了重刮、回来翻「日志」页，却找不到自己刚做的事。
+    logger.info(
+        "手动重刮 %s：%s%s",
+        path.name,
+        fresh.status.value,
+        f"（{fresh.error}）" if fresh.error else "",
+    )
+
     written: list[str] = []
     if payload.write and fresh.status is ScrapeStatus.SUCCESS:
         target = _Path(payload.metadata_dir or ctx.config.metadata_dir or path.parent)
@@ -625,6 +634,12 @@ async def rescan_record(
             )]
         except Exception as exc:  # noqa: BLE001 - 同上
             raise HTTPException(status_code=502, detail=f"写元数据失败: {exc}") from exc
+        logger.info(
+            "重刮写入 %d 个文件（%s）：%s",
+            len(written),
+            path.name,
+            "、".join(_Path(p).name for p in written),
+        )
 
     return {
         "record": fresh.model_dump(mode="json"),
